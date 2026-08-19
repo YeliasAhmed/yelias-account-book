@@ -1785,6 +1785,7 @@
           <div class="desc" id="pinStatus">Not set</div>
         </div>
         <button class="btn sm" id="btnPinSet">Set PIN</button>
+        <button class="btn sm" id="btnLockNow" style="display:none;">Lock now</button>
         <button class="btn sm danger" id="btnPinRemove" style="display:none;">Remove</button>
       </div>
     </div>
@@ -4747,9 +4748,15 @@ function closeAllParties() {
 ======================================================================== */
 function openSettings() {
   applyTheme(prefs.theme || 'dark');
-  document.getElementById('pinStatus').textContent = prefs.pinHash ? 'Enabled — app locks on startup' : 'Not set';
+  const isUnlockedForThis = prefs.pinHash && localStorage.getItem('ledger.pinUnlockedFor') === prefs.pinHash;
+  document.getElementById('pinStatus').textContent = prefs.pinHash
+    ? (isUnlockedForThis
+        ? 'Enabled — this device is remembered as unlocked'
+        : 'Enabled — will prompt on next reload')
+    : 'Not set';
   document.getElementById('btnPinSet').textContent = prefs.pinHash ? 'Change PIN' : 'Set PIN';
   document.getElementById('btnPinRemove').style.display = prefs.pinHash ? '' : 'none';
+  document.getElementById('btnLockNow').style.display   = prefs.pinHash ? '' : 'none';
   document.getElementById('remindersToggle').checked = !!prefs.reminders;
   document.getElementById('dataSummary').textContent =
     `${entries.length} entries · ${logs.length} log events`;
@@ -4854,10 +4861,15 @@ async function setPin() {
   if (pin2 !== pin1) { toast('PINs do not match', 'error'); return; }
   prefs.pinHash = await sha256(pin1);
   savePrefs(prefs);
+  // User just set/changed a PIN — treat this device as trusted so they don't get
+  // locked out immediately. Store the new hash as the "unlocked for" marker.
+  window.__unlockedSession = true;
+  localStorage.setItem('ledger.pinUnlockedFor', prefs.pinHash);
   toast('PIN saved — will sync to all your devices');
-  document.getElementById('pinStatus').textContent = 'Enabled — app locks on startup';
+  document.getElementById('pinStatus').textContent = 'Enabled — locks new devices, this one is unlocked';
   document.getElementById('btnPinSet').textContent = 'Change PIN';
   document.getElementById('btnPinRemove').style.display = '';
+  document.getElementById('btnLockNow').style.display = '';
   log('UPDATE', 'PIN lock enabled/changed');
   renderAudit();
   scheduleCloudSync();
@@ -4870,13 +4882,34 @@ async function removePin() {
   if (hash !== prefs.pinHash) { toast('Wrong PIN', 'error'); return; }
   delete prefs.pinHash;
   savePrefs(prefs);
+  localStorage.removeItem('ledger.pinUnlockedFor');
   document.getElementById('pinStatus').textContent = 'Not set';
   document.getElementById('btnPinSet').textContent = 'Set PIN';
   document.getElementById('btnPinRemove').style.display = 'none';
+  document.getElementById('btnLockNow').style.display = 'none';
   toast('PIN removed');
   log('UPDATE', 'PIN lock removed');
   renderAudit();
   scheduleCloudSync();
+}
+
+function lockNow() {
+  if (!prefs.pinHash) { toast('No PIN set', 'error'); return; }
+  window.__unlockedSession = false;
+  localStorage.removeItem('ledger.pinUnlockedFor');
+  closeSettings();
+  toast('Locked');
+  checkLock();
+}
+
+function isSessionUnlocked() {
+  if (window.__unlockedSession) return true;
+  // Remembered on this device for the current PIN hash
+  if (prefs.pinHash && localStorage.getItem('ledger.pinUnlockedFor') === prefs.pinHash) {
+    window.__unlockedSession = true;
+    return true;
+  }
+  return false;
 }
 
 async function checkLock() {
@@ -4885,6 +4918,7 @@ async function checkLock() {
     // and we want applyCloudData to be able to trigger the lock in that case.
     return;
   }
+  if (isSessionUnlocked()) return;
   const screen = document.getElementById('lockScreen');
   const input  = document.getElementById('lockPin');
   const errEl  = document.getElementById('lockErr');
@@ -4902,6 +4936,7 @@ async function checkLock() {
         input.value = '';
         errEl.textContent = '';
         window.__unlockedSession = true;
+        localStorage.setItem('ledger.pinUnlockedFor', prefs.pinHash);
         resolve();
       } else {
         tries++;
@@ -5124,6 +5159,7 @@ document.getElementById('restoreFile').addEventListener('change', (e) => {
 document.getElementById('btnResetAll').addEventListener('click', resetAllData);
 document.getElementById('btnPinSet').addEventListener('click', setPin);
 document.getElementById('btnPinRemove').addEventListener('click', removePin);
+document.getElementById('btnLockNow').addEventListener('click', lockNow);
 document.getElementById('remindersToggle').addEventListener('change', (e) => {
   toggleReminders(e.target.checked);
 });
@@ -5473,8 +5509,8 @@ function applyCloudData(data) {
   selectedIds.clear();
   renderAll();
 
-  // If cloud has a PIN and this session hasn't unlocked yet, lock the app now
-  if (prefs.pinHash && !window.__unlockedSession) {
+  // If cloud has a PIN and we're not unlocked on this device, lock the app now
+  if (prefs.pinHash && !isSessionUnlocked()) {
     const screen = document.getElementById('lockScreen');
     if (screen && !screen.classList.contains('open')) {
       checkLock();
@@ -5736,6 +5772,7 @@ if (!cfgRaw) {
         },
         async signOut() {
           localStorage.removeItem('ledger.firebase.everSynced');
+          localStorage.removeItem('ledger.pinUnlockedFor');
           await signOut(auth);
         },
         async syncNow() {
