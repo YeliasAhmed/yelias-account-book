@@ -5564,13 +5564,33 @@ if (!cfgRaw) {
 
       let currentUser = null;
       let saveTimer = null;
-      let lastSnapshotStr = null;      // JSON string of last known cloud data
+      let lastSnapshotStr = null;      // canonical JSON of last known cloud data
       let unsubSnapshot = null;
       let suppressNextSnapshot = false; // when we push, ignore the echo
 
       function setStatus(text) {
         const el = document.getElementById('cloudSyncStatus');
         if (el) el.textContent = text;
+      }
+
+      // Canonicalize objects (sort keys alphabetically) so JSON comparison is
+      // stable across Firestore round-trips (which don't preserve key order).
+      function canonicalize(obj) {
+        if (Array.isArray(obj)) return obj.map(canonicalize);
+        if (obj && typeof obj === 'object') {
+          return Object.keys(obj).sort().reduce((r, k) => {
+            r[k] = canonicalize(obj[k]);
+            return r;
+          }, {});
+        }
+        return obj;
+      }
+      function stableJSON(payload) {
+        return JSON.stringify(canonicalize({
+          entries: payload.entries || [],
+          cash:    payload.cash    || [],
+          logs:    payload.logs    || [],
+        }));
       }
 
       async function loadFromCloud() {
@@ -5581,49 +5601,47 @@ if (!cfgRaw) {
         if (!snap.exists()) {
           setStatus('Cloud empty — pushing local data');
           await pushLocal();
+          localStorage.setItem('ledger.firebase.everSynced', '1');
           return;
         }
         const data = snap.data();
         const local = getLocalData();
         const cloudCount = (data.entries || []).length + (data.cash || []).length;
         const localCount = local.entries.length + local.cash.length;
+        const localStr  = stableJSON(local);
+        const remoteStr = stableJSON(data);
+        const alreadySynced = localStorage.getItem('ledger.firebase.everSynced') === '1';
 
-        // If local has data and cloud has data, ask user how to resolve
-        if (localCount > 0 && cloudCount > 0) {
-          const localStr = JSON.stringify({ entries: local.entries, cash: local.cash, logs: local.logs });
-          const remoteStr = JSON.stringify({
-            entries: data.entries || [], cash: data.cash || [], logs: data.logs || []
-          });
-          if (localStr !== remoteStr) {
-            const choice = prompt(
-              `Cloud has ${cloudCount} items, this device has ${localCount} items — they differ.\n\n` +
-              `Type "cloud" to REPLACE this device with cloud data,\n` +
-              `Type "local" to OVERWRITE cloud with this device's data,\n` +
-              `Or Cancel to sign out.`,
-              'cloud'
-            );
-            if (!choice) { await signOut(auth); return; }
-            if (choice.toLowerCase().startsWith('local')) {
-              await pushLocal();
-              return;
-            }
-            // else: fall through and load cloud
+        // Only prompt on FIRST sign-in on this device when both sides have data.
+        // After that, cloud is source of truth (silent reloads).
+        if (!alreadySynced && localCount > 0 && cloudCount > 0 && localStr !== remoteStr) {
+          const choice = prompt(
+            `First-time sync on this device.\n\n` +
+            `Cloud has ${cloudCount} items, this device has ${localCount} items — they differ.\n\n` +
+            `Type "cloud" to REPLACE this device with cloud data,\n` +
+            `Type "local" to OVERWRITE cloud with this device's data,\n` +
+            `Or Cancel to sign out.`,
+            'cloud'
+          );
+          if (!choice) { await signOut(auth); return; }
+          if (choice.toLowerCase().startsWith('local')) {
+            await pushLocal();
+            localStorage.setItem('ledger.firebase.everSynced', '1');
+            return;
           }
+          // else: fall through and load cloud
         }
 
-        lastSnapshotStr = JSON.stringify({
-          entries: data.entries || [], cash: data.cash || [], logs: data.logs || []
-        });
+        lastSnapshotStr = remoteStr;
         applyCloudData(data);
+        localStorage.setItem('ledger.firebase.everSynced', '1');
         setStatus(`Synced ${new Date().toLocaleTimeString()}`);
       }
 
       async function pushLocal() {
         if (!currentUser) return;
         const local = getLocalData();
-        const localStr = JSON.stringify({
-          entries: local.entries, cash: local.cash, logs: local.logs
-        });
+        const localStr = stableJSON(local);
         if (localStr === lastSnapshotStr) {
           setStatus(`Synced ${new Date().toLocaleTimeString()}`);
           return;
@@ -5642,9 +5660,7 @@ if (!cfgRaw) {
           if (!snap.exists()) return;
           if (suppressNextSnapshot) { suppressNextSnapshot = false; return; }
           const data = snap.data();
-          const remoteStr = JSON.stringify({
-            entries: data.entries || [], cash: data.cash || [], logs: data.logs || []
-          });
+          const remoteStr = stableJSON(data);
           if (remoteStr !== lastSnapshotStr) {
             lastSnapshotStr = remoteStr;
             applyCloudData(data);
@@ -5679,6 +5695,7 @@ if (!cfgRaw) {
           }
         },
         async signOut() {
+          localStorage.removeItem('ledger.firebase.everSynced');
           await signOut(auth);
         },
         async syncNow() {
