@@ -5601,9 +5601,26 @@ saveArr = function(key, arr) {
 
 <!-- Firebase module — separate script so ES modules work; exposes window.__cloud -->
 <script type="module">
-const cfgRaw = localStorage.getItem('ledger.firebase.config');
+// Default Firebase config baked into the app. Any new device just opens the URL
+// and signs in — no need to paste JSON. localStorage can still override if you
+// want to point at a different Firebase project (advanced).
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCedLvTNtqjBjEndwmfxuJG4-8L4giBNhs",
+  authDomain: "yelias-account-book.firebaseapp.com",
+  projectId: "yelias-account-book",
+  storageBucket: "yelias-account-book.firebasestorage.app",
+  messagingSenderId: "1055131932601",
+  appId: "1:1055131932601:web:6edc7517d96714173a0868",
+  measurementId: "G-RM58YYB2WL"
+};
+
+const overrideRaw = localStorage.getItem('ledger.firebase.config');
+let cfgRaw = overrideRaw;
 if (!cfgRaw) {
-  // Not configured yet — expose a stub so the main UI works
+  cfgRaw = JSON.stringify(DEFAULT_FIREBASE_CONFIG);
+}
+
+if (!cfgRaw) {
   window.__cloud = {
     init: () => {},
     getConfig: () => null,
