@@ -4854,12 +4854,13 @@ async function setPin() {
   if (pin2 !== pin1) { toast('PINs do not match', 'error'); return; }
   prefs.pinHash = await sha256(pin1);
   savePrefs(prefs);
-  toast('PIN saved');
+  toast('PIN saved — will sync to all your devices');
   document.getElementById('pinStatus').textContent = 'Enabled — app locks on startup';
   document.getElementById('btnPinSet').textContent = 'Change PIN';
   document.getElementById('btnPinRemove').style.display = '';
   log('UPDATE', 'PIN lock enabled/changed');
   renderAudit();
+  scheduleCloudSync();
 }
 
 async function removePin() {
@@ -4875,10 +4876,15 @@ async function removePin() {
   toast('PIN removed');
   log('UPDATE', 'PIN lock removed');
   renderAudit();
+  scheduleCloudSync();
 }
 
 async function checkLock() {
-  if (!prefs.pinHash) return;
+  if (!prefs.pinHash) {
+    // No local PIN yet. Do NOT set __unlockedSession — cloud may still bring in a PIN
+    // and we want applyCloudData to be able to trigger the lock in that case.
+    return;
+  }
   const screen = document.getElementById('lockScreen');
   const input  = document.getElementById('lockPin');
   const errEl  = document.getElementById('lockErr');
@@ -4895,6 +4901,7 @@ async function checkLock() {
         screen.classList.remove('open');
         input.value = '';
         errEl.textContent = '';
+        window.__unlockedSession = true;
         resolve();
       } else {
         tries++;
@@ -5445,11 +5452,43 @@ function applyCloudData(data) {
   saveArr(STORE.entries, entries);
   saveArr(STORE.cash, cashTx);
   saveArr(STORE.logs, logs);
+
+  // Sync PIN from cloud
+  const cloudPin = data.pinHash || null;
+  if (cloudPin !== (prefs.pinHash || null)) {
+    if (cloudPin) prefs.pinHash = cloudPin;
+    else           delete prefs.pinHash;
+    savePrefs(prefs);
+    if (typeof updateCloudUI === 'function') {
+      // Refresh Settings UI so PIN status stays accurate if it's open
+      const pinStatus = document.getElementById('pinStatus');
+      if (pinStatus) pinStatus.textContent = prefs.pinHash ? 'Enabled — app locks on startup' : 'Not set';
+      const pinSet    = document.getElementById('btnPinSet');
+      const pinRemove = document.getElementById('btnPinRemove');
+      if (pinSet)    pinSet.textContent = prefs.pinHash ? 'Change PIN' : 'Set PIN';
+      if (pinRemove) pinRemove.style.display = prefs.pinHash ? '' : 'none';
+    }
+  }
+
   selectedIds.clear();
   renderAll();
+
+  // If cloud has a PIN and this session hasn't unlocked yet, lock the app now
+  if (prefs.pinHash && !window.__unlockedSession) {
+    const screen = document.getElementById('lockScreen');
+    if (screen && !screen.classList.contains('open')) {
+      checkLock();
+    }
+  }
 }
 function getLocalData() {
-  return { entries, cash: cashTx, logs, updatedAt: Date.now() };
+  return {
+    entries,
+    cash: cashTx,
+    logs,
+    pinHash: prefs.pinHash || null,   // sync PIN so it's enforced on every device
+    updatedAt: Date.now(),
+  };
 }
 
 /* ========================================================================
@@ -5590,6 +5629,7 @@ if (!cfgRaw) {
           entries: payload.entries || [],
           cash:    payload.cash    || [],
           logs:    payload.logs    || [],
+          pinHash: payload.pinHash || null,
         }));
       }
 
