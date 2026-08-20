@@ -693,6 +693,50 @@
     color: #a5b4fc;
     margin-right: 4px;
   }
+  /* Collapsible sections (Category / Person / Project) */
+  .collapsible { margin-top: 22px; }
+  .collapsible-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--panel-2);
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .collapsible-header:hover { background: rgba(99,102,241,0.1); }
+  .collapsible-title {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .collapsible-title .chevron {
+    font-size: 12px;
+    transition: transform 0.15s;
+    display: inline-block;
+  }
+  .collapsible[data-collapsed="true"] .chevron { transform: rotate(-90deg); }
+  .collapsible-summary {
+    color: var(--text);
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: none;
+    letter-spacing: 0;
+    margin-left: 6px;
+  }
+  .collapsible-selector { cursor: pointer; }
+  .collapsible-content { margin-top: 12px; }
+  .collapsible[data-collapsed="true"] .collapsible-content { display: none; }
+  .collapsible[data-collapsed="true"] + #projectDetail { display: none !important; }
+
   /* Cash by location */
   .location-grid {
     display: grid;
@@ -1163,42 +1207,60 @@
           </div>
         </div>
 
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:8px;">
-          <h4 class="dash-list-title" style="flex:1;">Expenses by Person</h4>
-          <select id="personPeriod" class="btn sm" style="padding:5px 10px;">
-            <option value="thisMonth">This month</option>
-            <option value="lastMonth">Last month</option>
-            <option value="last3">Last 3 months</option>
-            <option value="thisYear">This year</option>
-            <option value="all">All time</option>
-          </select>
+        <div class="collapsible" data-collapsed="true" data-key="person">
+          <div class="collapsible-header">
+            <div class="collapsible-title">
+              <span class="chevron">▾</span>
+              Expenses by Person
+              <span id="personSummary" class="collapsible-summary"></span>
+            </div>
+            <select id="personPeriod" class="btn sm collapsible-selector" style="padding:5px 10px;">
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last3">Last 3 months</option>
+              <option value="thisYear">This year</option>
+              <option value="all">All time</option>
+            </select>
+          </div>
+          <div id="cashPersonBreakdown" class="location-grid collapsible-content"></div>
         </div>
-        <div id="cashPersonBreakdown" class="location-grid"></div>
 
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:8px;">
-          <h4 class="dash-list-title" style="flex:1;">Expenses by Project</h4>
-          <select id="projectPeriod" class="btn sm" style="padding:5px 10px;">
-            <option value="all">All time</option>
-            <option value="thisMonth">This month</option>
-            <option value="lastMonth">Last month</option>
-            <option value="last3">Last 3 months</option>
-            <option value="thisYear">This year</option>
-          </select>
+        <div class="collapsible" data-collapsed="true" data-key="project">
+          <div class="collapsible-header">
+            <div class="collapsible-title">
+              <span class="chevron">▾</span>
+              Expenses by Project
+              <span id="projectSummary" class="collapsible-summary"></span>
+            </div>
+            <select id="projectPeriod" class="btn sm collapsible-selector" style="padding:5px 10px;">
+              <option value="all">All time</option>
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last3">Last 3 months</option>
+              <option value="thisYear">This year</option>
+            </select>
+          </div>
+          <div id="cashProjectBreakdown" class="location-grid collapsible-content"></div>
+          <div id="projectDetail" style="display:none;margin-top:16px;"></div>
         </div>
-        <div id="cashProjectBreakdown" class="location-grid"></div>
-        <div id="projectDetail" style="display:none;margin-top:16px;"></div>
 
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:8px;">
-          <h4 class="dash-list-title" style="flex:1;">Spending by Category</h4>
-          <select id="catPeriod" class="btn sm" style="padding:5px 10px;">
-            <option value="thisMonth">This month</option>
-            <option value="lastMonth">Last month</option>
-            <option value="last3">Last 3 months</option>
-            <option value="thisYear">This year</option>
-            <option value="all">All time</option>
-          </select>
+        <div class="collapsible" data-collapsed="true" data-key="category">
+          <div class="collapsible-header">
+            <div class="collapsible-title">
+              <span class="chevron">▾</span>
+              Spending by Category
+              <span id="categorySummary" class="collapsible-summary"></span>
+            </div>
+            <select id="catPeriod" class="btn sm collapsible-selector" style="padding:5px 10px;">
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last3">Last 3 months</option>
+              <option value="thisYear">This year</option>
+              <option value="all">All time</option>
+            </select>
+          </div>
+          <div id="cashCategoryBreakdown" class="collapsible-content"></div>
         </div>
-        <div id="cashCategoryBreakdown"></div>
       </div>
 
       <div class="panel dash-lists wide">
@@ -3772,7 +3834,9 @@ function renderCashProjectBreakdown() {
     grandTotal += Number(t.amount);
   }
 
+  const summaryEl = document.getElementById('projectSummary');
   if (map.size === 0) {
+    if (summaryEl) summaryEl.innerHTML = `<span style="color:var(--muted);">No project-tagged expenses in this period</span>`;
     wrap.innerHTML = `<div class="dash-empty" style="grid-column:1/-1;">No project-tagged expenses in this period. Tag expenses with a project (e.g. "House Development") to see breakdown here.</div>`;
     document.getElementById('projectDetail').style.display = 'none';
     return;
@@ -3781,6 +3845,9 @@ function renderCashProjectBreakdown() {
     .map(([project, x]) => ({ project, ...x, pct: grandTotal > 0 ? (x.total / grandTotal) * 100 : 0 }))
     .sort((a, b) => b.total - a.total);
 
+  if (summaryEl) {
+    summaryEl.innerHTML = `${list.length} project${list.length === 1 ? '' : 's'} · Total spent: <strong style="color:var(--primary);">${fmtMoney(grandTotal)}</strong>`;
+  }
   wrap.innerHTML = list.map(r => `
     <a href="#" class="loc-card" data-act="project-drill" data-project="${escapeHtml(r.project)}"
        style="border-left-color:var(--primary);text-decoration:none;color:inherit;display:block;cursor:pointer;">
@@ -3915,7 +3982,9 @@ function renderCashPersonBreakdown() {
     grandTotal += Number(t.amount);
   }
 
+  const summaryEl = document.getElementById('personSummary');
   if (map.size === 0) {
+    if (summaryEl) summaryEl.innerHTML = `<span style="color:var(--muted);">No person-tagged expenses in this period</span>`;
     wrap.innerHTML = `<div class="dash-empty" style="grid-column:1/-1;">No person-tagged personal expenses in this period. Add a person's name to (non-project) expenses to track per-person spending.</div>`;
     return;
   }
@@ -3923,6 +3992,9 @@ function renderCashPersonBreakdown() {
     .map(([person, x]) => ({ person, ...x, pct: grandTotal > 0 ? (x.total / grandTotal) * 100 : 0 }))
     .sort((a, b) => b.total - a.total);
 
+  if (summaryEl) {
+    summaryEl.innerHTML = `${list.length} ${list.length === 1 ? 'person' : 'people'} · Total spent: <strong style="color:var(--payable);">${fmtMoney(grandTotal)}</strong>`;
+  }
   wrap.innerHTML = list.map(r => `
     <div class="loc-card" style="border-left-color:var(--payable);">
       <div class="loc-name">${escapeHtml(r.person)}</div>
@@ -3991,7 +4063,9 @@ function renderCashCategoryBreakdown() {
     grandTotal += Number(t.amount);
   }
 
+  const summaryEl = document.getElementById('categorySummary');
   if (map.size === 0) {
+    if (summaryEl) summaryEl.innerHTML = `<span style="color:var(--muted);">No expenses in this period</span>`;
     wrap.innerHTML = `<div class="dash-empty">No non-project expenses in this period. Project expenses are shown in the "Expenses by Project" section above.</div>`;
     return;
   }
@@ -4013,12 +4087,10 @@ function renderCashCategoryBreakdown() {
     </div>
   `).join('');
 
-  wrap.innerHTML = `
-    <div style="margin-bottom:12px;font-size:12px;color:var(--muted);">
-      ${list.length} categor${list.length === 1 ? 'y' : 'ies'} · Total spent: <strong style="color:var(--payable);">${fmtMoney(grandTotal)}</strong>
-    </div>
-    ${rows}
-  `;
+  if (summaryEl) {
+    summaryEl.innerHTML = `${list.length} categor${list.length === 1 ? 'y' : 'ies'} · Total spent: <strong style="color:var(--payable);">${fmtMoney(grandTotal)}</strong>`;
+  }
+  wrap.innerHTML = rows;
 }
 
 function renderCashRecent() {
@@ -5716,6 +5788,16 @@ document.getElementById('cPerson').addEventListener('input', () => {
 });
 document.getElementById('personPeriod').addEventListener('change', renderCashPersonBreakdown);
 document.getElementById('projectPeriod').addEventListener('change', renderCashProjectBreakdown);
+
+// Collapsible sections — click header to toggle (except selectors)
+document.querySelectorAll('.collapsible-header').forEach(h => {
+  h.addEventListener('click', (e) => {
+    if (e.target.closest('.collapsible-selector')) return; // don't toggle when using dropdown
+    const section = h.closest('.collapsible');
+    const collapsed = section.getAttribute('data-collapsed') === 'true';
+    section.setAttribute('data-collapsed', collapsed ? 'false' : 'true');
+  });
+});
 document.getElementById('cashProjectBreakdown').addEventListener('click', (e) => {
   const card = e.target.closest('[data-act="project-drill"]');
   if (!card) return;
