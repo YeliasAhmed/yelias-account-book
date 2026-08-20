@@ -4768,12 +4768,6 @@ function renderFinancialReport() {
   // --- Balance snapshots (adjustments) in period ---
   const snapshots = cashInPeriod.filter(t => t.type === 'adjustment').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-  // --- Activity log in period ---
-  const activityInPeriod = logs.filter(l => {
-    const d = (l.timestamp || '').slice(0, 10);
-    return d >= from && d <= to;
-  }).slice(0, 200); // cap at 200
-
   // Render sections
   const preview = document.getElementById('fReportPreview');
   const tableSection = (title, rows) => rows.length > 0
@@ -4952,23 +4946,6 @@ function renderFinancialReport() {
     </table>
   ` : '';
 
-  // Activity log
-  const activityHtml = activityInPeriod.length > 0 ? `
-    <h4>Activity Log (${label}) — ${activityInPeriod.length} events</h4>
-    <table>
-      <thead><tr><th style="width:130px;">When</th><th style="width:80px;">Action</th><th>Detail</th></tr></thead>
-      <tbody>
-        ${activityInPeriod.map(l => `
-          <tr>
-            <td style="font-size:11px;">${fmtDateTime(l.timestamp)}</td>
-            <td><strong>${escapeHtml(l.action)}</strong></td>
-            <td>${escapeHtml(l.detail)}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  ` : '';
-
   preview.innerHTML = `
     <h3>Financial Report — ${label}</h3>
     <div class="muted" style="font-size:11px;margin-bottom:14px;">
@@ -4982,8 +4959,7 @@ function renderFinancialReport() {
     ${projectHtml}
     ${personHtml}
     ${snapshotsHtml}
-    ${activityHtml}
-    ${payables.length === 0 && receivables.length === 0 && cashInPeriod.length === 0 && activityInPeriod.length === 0
+    ${payables.length === 0 && receivables.length === 0 && cashInPeriod.length === 0
       ? `<div class="report-empty">No data in this period.</div>` : ''}
   `;
 }
