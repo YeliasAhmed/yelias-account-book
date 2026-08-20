@@ -693,6 +693,20 @@
     color: #a5b4fc;
     margin-right: 4px;
   }
+  /* Clickable summary count in expense breakdown headers */
+  .summary-link {
+    color: var(--primary);
+    cursor: pointer;
+    border-bottom: 1px dashed var(--primary);
+    padding: 1px 2px;
+    transition: all 0.15s;
+    font-weight: 600;
+  }
+  .summary-link:hover {
+    background: rgba(99,102,241,0.10);
+    border-bottom-style: solid;
+  }
+
   /* Collapsible sections (Category / Person / Project) */
   .collapsible { margin-top: 22px; }
   .collapsible-header {
@@ -1573,6 +1587,18 @@
       <button type="button" class="btn" id="btnMonthlyPdf">Print / PDF</button>
       <div style="flex:1;"></div>
       <button type="button" class="btn primary" id="btnMonthlyClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Breakdown detail popup (Category / Person / Project) -->
+<div class="modal-backdrop" id="breakdownDetailBackdrop">
+  <div class="modal report">
+    <h2 id="breakdownDetailTitle">Details</h2>
+    <div class="report-preview" id="breakdownDetailContent"></div>
+    <div class="modal-actions">
+      <div style="flex:1;"></div>
+      <button type="button" class="btn primary" id="btnBreakdownDetailClose">Close</button>
     </div>
   </div>
 </div>
@@ -3800,6 +3826,125 @@ function renderCashPanel() {
   renderCashCategoryBreakdown();
 }
 
+function openBreakdownDetail(breakdownType) {
+  // breakdownType: 'category' | 'person' | 'project'
+  const config = {
+    category: {
+      title: 'Spending by Category',
+      periodEl: 'catPeriod',
+      keyFn: t => (t.category || '(no category)').trim(),
+      filterFn: t => !t.project,
+      keyLabel: 'Category',
+      color: 'var(--payable)',
+    },
+    person: {
+      title: 'Expenses by Person',
+      periodEl: 'personPeriod',
+      keyFn: t => t.person,
+      filterFn: t => !!t.person && !t.project,
+      keyLabel: 'Person',
+      color: 'var(--payable)',
+    },
+    project: {
+      title: 'Expenses by Project',
+      periodEl: 'projectPeriod',
+      keyFn: t => t.project,
+      filterFn: t => !!t.project,
+      keyLabel: 'Project',
+      color: 'var(--primary)',
+    },
+  }[breakdownType];
+
+  const period = document.getElementById(config.periodEl).value;
+  const { from, to } = periodBounds(period);
+  const periodText = ({
+    thisMonth: 'This month', lastMonth: 'Last month',
+    last3: 'Last 3 months', thisYear: 'This year', all: 'All time',
+  })[period] || 'Period';
+
+  // Group transactions by key
+  const groups = new Map();
+  let grandTotal = 0;
+  for (const t of cashTx) {
+    if (t.type !== 'expense') continue;
+    if (!config.filterFn(t)) continue;
+    const d = (t.date || '').slice(0, 10);
+    if (d < from || d > to) continue;
+    const key = config.keyFn(t);
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, { total: 0, txns: [] });
+    const g = groups.get(key);
+    g.total += Number(t.amount);
+    g.txns.push(t);
+    grandTotal += Number(t.amount);
+  }
+
+  document.getElementById('breakdownDetailTitle').textContent = `${config.title} — Detail`;
+
+  if (groups.size === 0) {
+    document.getElementById('breakdownDetailContent').innerHTML =
+      `<div class="report-empty">No matching transactions in this period.</div>`;
+    document.getElementById('breakdownDetailBackdrop').classList.add('open');
+    return;
+  }
+
+  const sortedGroups = [...groups.entries()].sort((a, b) => b[1].total - a[1].total);
+
+  const html = `
+    <div class="muted" style="font-size:11px;margin-bottom:14px;">
+      ${periodText} · ${fmtDate(from)} to ${fmtDate(to)} · ${groups.size} ${config.keyLabel.toLowerCase()}${groups.size === 1 ? '' : 's'} ·
+      Total: <strong style="color:${config.color};">${fmtMoney(grandTotal)}</strong>
+    </div>
+    ${sortedGroups.map(([key, g]) => {
+      const pct = grandTotal > 0 ? (g.total / grandTotal) * 100 : 0;
+      const txnsSorted = g.txns.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      return `
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 10px;background:var(--panel-2);border-radius:6px;margin-bottom:6px;">
+            <div style="font-weight:600;font-size:13px;">
+              ${escapeHtml(key)}
+              <span style="color:var(--muted);font-size:11px;font-weight:400;margin-left:6px;">${g.txns.length} txn${g.txns.length === 1 ? '' : 's'}</span>
+            </div>
+            <div style="font-weight:700;color:${config.color};font-variant-numeric:tabular-nums;">
+              ${fmtMoney(g.total)} <span style="color:var(--muted);font-size:11px;font-weight:400;">(${pct.toFixed(1)}%)</span>
+            </div>
+          </div>
+          <table>
+            <thead><tr>
+              <th style="width:100px;">Date</th>
+              <th>Note</th>
+              <th>Location</th>
+              ${breakdownType !== 'person' ? '<th>Person</th>' : ''}
+              ${breakdownType !== 'category' ? '<th>Category</th>' : ''}
+              ${breakdownType !== 'project' ? '<th>Project</th>' : ''}
+              <th class="num" style="width:110px;">Amount</th>
+            </tr></thead>
+            <tbody>
+              ${txnsSorted.map(t => `
+                <tr>
+                  <td>${fmtDate(t.date)}</td>
+                  <td>${escapeHtml(t.note || '—')}</td>
+                  <td>${escapeHtml(t.location || 'Hand')}</td>
+                  ${breakdownType !== 'person' ? `<td>${escapeHtml(t.person || '—')}</td>` : ''}
+                  ${breakdownType !== 'category' ? `<td>${escapeHtml(t.category || '—')}</td>` : ''}
+                  ${breakdownType !== 'project' ? `<td>${escapeHtml(t.project || '—')}</td>` : ''}
+                  <td class="num" style="color:${config.color};">${fmtMoney(t.amount)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }).join('')}
+  `;
+  document.getElementById('breakdownDetailContent').innerHTML = html;
+  document.getElementById('breakdownDetailBackdrop').classList.add('open');
+}
+
+function closeBreakdownDetail() {
+  document.getElementById('breakdownDetailBackdrop').classList.remove('open');
+}
+
 function renderCashProjectBreakdown() {
   const period = document.getElementById('projectPeriod').value;
   const { from, to } = periodBounds(period);
@@ -3831,7 +3976,7 @@ function renderCashProjectBreakdown() {
     .sort((a, b) => b.total - a.total);
 
   if (summaryEl) {
-    summaryEl.innerHTML = `${list.length} project${list.length === 1 ? '' : 's'} · Total spent: <strong style="color:var(--primary);">${fmtMoney(grandTotal)}</strong>`;
+    summaryEl.innerHTML = `<span class="summary-link" data-breakdown="project" title="Click to see all transactions">${list.length} project${list.length === 1 ? '' : 's'}</span> · Total spent: <strong style="color:var(--primary);">${fmtMoney(grandTotal)}</strong>`;
   }
   wrap.innerHTML = list.map(r => `
     <a href="#" class="loc-card" data-act="project-drill" data-project="${escapeHtml(r.project)}"
@@ -3978,7 +4123,7 @@ function renderCashPersonBreakdown() {
     .sort((a, b) => b.total - a.total);
 
   if (summaryEl) {
-    summaryEl.innerHTML = `${list.length} ${list.length === 1 ? 'person' : 'people'} · Total spent: <strong style="color:var(--payable);">${fmtMoney(grandTotal)}</strong>`;
+    summaryEl.innerHTML = `<span class="summary-link" data-breakdown="person" title="Click to see all transactions">${list.length} ${list.length === 1 ? 'person' : 'people'}</span> · Total spent: <strong style="color:var(--payable);">${fmtMoney(grandTotal)}</strong>`;
   }
   wrap.innerHTML = list.map(r => `
     <div class="loc-card" style="border-left-color:var(--payable);">
@@ -4073,7 +4218,7 @@ function renderCashCategoryBreakdown() {
   `).join('');
 
   if (summaryEl) {
-    summaryEl.innerHTML = `${list.length} categor${list.length === 1 ? 'y' : 'ies'} · Total spent: <strong style="color:var(--payable);">${fmtMoney(grandTotal)}</strong>`;
+    summaryEl.innerHTML = `<span class="summary-link" data-breakdown="category" title="Click to see all transactions">${list.length} categor${list.length === 1 ? 'y' : 'ies'}</span> · Total spent: <strong style="color:var(--payable);">${fmtMoney(grandTotal)}</strong>`;
   }
   wrap.innerHTML = rows;
 }
@@ -5773,6 +5918,18 @@ document.getElementById('cPerson').addEventListener('input', () => {
 });
 document.getElementById('personPeriod').addEventListener('change', renderCashPersonBreakdown);
 document.getElementById('projectPeriod').addEventListener('change', renderCashProjectBreakdown);
+
+// Clickable summary counts — open the detail popup
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('.summary-link[data-breakdown]');
+  if (!link) return;
+  e.preventDefault();
+  openBreakdownDetail(link.dataset.breakdown);
+});
+document.getElementById('btnBreakdownDetailClose').addEventListener('click', closeBreakdownDetail);
+document.getElementById('breakdownDetailBackdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'breakdownDetailBackdrop') closeBreakdownDetail();
+});
 document.getElementById('cashProjectBreakdown').addEventListener('click', (e) => {
   const card = e.target.closest('[data-act="project-drill"]');
   if (!card) return;
@@ -5891,6 +6048,7 @@ document.addEventListener('keydown', (e) => {
     closeMonthlyModal();
     closeCashModal();
     closeFinancialReport();
+    closeBreakdownDetail();
     document.getElementById('newEntryDropdown').classList.remove('open');
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); openModal(); }
