@@ -1006,8 +1006,7 @@
       <button class="btn" id="btnAging">Aging</button>
       <button class="btn" id="btnMonthlyReport">Monthly</button>
       <button class="btn" id="btnPartyReport">Party Report</button>
-      <button class="btn" id="btnExportCsv">Export CSV</button>
-      <button class="btn" id="btnExportPdf">Export PDF</button>
+      <button class="btn" id="btnFinancialReport">Report</button>
       <button class="btn" id="btnSettings" title="Settings">&#9881;</button>
       <div class="dropdown" id="newEntryDropdown">
         <button class="btn primary dropdown-toggle" id="btnNewEntryToggle">
@@ -1527,6 +1526,31 @@
       <button type="button" class="btn" id="btnMonthlyPdf">Print / PDF</button>
       <div style="flex:1;"></div>
       <button type="button" class="btn primary" id="btnMonthlyClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Financial Report (comprehensive PDF-oriented report) -->
+<div class="modal-backdrop" id="fReportModalBackdrop">
+  <div class="modal report">
+    <h2>Financial Report</h2>
+    <div class="form-grid" style="margin-bottom:8px;">
+      <div class="form-group">
+        <label for="fReportPeriod">Period</label>
+        <select id="fReportPeriod">
+          <option value="thisMonth">This month (monthly)</option>
+          <option value="lastMonth">Last month</option>
+          <option value="thisYear">This year (yearly)</option>
+          <option value="lastYear">Last year</option>
+          <option value="all">All time</option>
+        </select>
+      </div>
+    </div>
+    <div class="report-preview" id="fReportPreview"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="btnFReportPdf">Print / Save as PDF</button>
+      <div style="flex:1;"></div>
+      <button type="button" class="btn primary" id="btnFReportClose">Close</button>
     </div>
   </div>
 </div>
@@ -4641,6 +4665,377 @@ function exportMonthlyCsv() {
   renderAudit();
 }
 
+/* ========================================================================
+   COMPREHENSIVE FINANCIAL REPORT (monthly / yearly)
+======================================================================== */
+function periodLabel(period) {
+  const now = new Date();
+  const monthNames = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+  if (period === 'thisMonth')  return `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+  if (period === 'lastMonth')  {
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+  }
+  if (period === 'thisYear')   return `Year ${now.getFullYear()}`;
+  if (period === 'lastYear')   return `Year ${now.getFullYear() - 1}`;
+  return 'All time';
+}
+
+function fPeriodBounds(period) {
+  const now = new Date();
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  if (period === 'thisMonth')  return { from: iso(new Date(now.getFullYear(), now.getMonth(), 1)),     to: iso(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
+  if (period === 'lastMonth')  return { from: iso(new Date(now.getFullYear(), now.getMonth() - 1, 1)), to: iso(new Date(now.getFullYear(), now.getMonth(), 0)) };
+  if (period === 'thisYear')   return { from: iso(new Date(now.getFullYear(), 0, 1)),                  to: iso(new Date(now.getFullYear(), 11, 31)) };
+  if (period === 'lastYear')   return { from: iso(new Date(now.getFullYear() - 1, 0, 1)),              to: iso(new Date(now.getFullYear() - 1, 11, 31)) };
+  return { from: '0000-01-01', to: '9999-12-31' };
+}
+
+function renderFinancialReport() {
+  const period = document.getElementById('fReportPeriod').value;
+  const { from, to } = fPeriodBounds(period);
+  const label = periodLabel(period);
+  const isYearly = period === 'thisYear' || period === 'lastYear' || period === 'all';
+
+  // --- Summary (current state totals, not period-filtered) ---
+  let totalRecv = 0, totalPay = 0, cntRecv = 0, cntPay = 0, overdue = 0;
+  for (const e of entries) {
+    const bal = getBalance(e);
+    if (bal > 0) {
+      if (e.type === 'receivable') { totalRecv += bal; cntRecv++; }
+      else                          { totalPay  += bal; cntPay++; }
+      if (isOverdue(e)) overdue++;
+    }
+  }
+  const netPosition = totalRecv - totalPay;
+  const cashBalance = getCashBalance();
+
+  // --- Cash flow for the period ---
+  let periodIncome = 0, periodExpense = 0;
+  const cashInPeriod = cashTx.filter(t => {
+    const d = (t.date || '').slice(0, 10);
+    return d >= from && d <= to;
+  });
+  for (const t of cashInPeriod) {
+    if (t.type === 'income')       periodIncome  += Number(t.amount);
+    else if (t.type === 'expense' && !t.project) periodExpense += Number(t.amount);
+  }
+
+  // Monthly breakdown (only meaningful for yearly period)
+  const monthlyBreakdown = [];
+  if (isYearly) {
+    const [fYear] = from.split('-').map(Number);
+    const [tYear] = to.split('-').map(Number);
+    const startY = fYear === 0 ? new Date(cashTx[0]?.date || Date.now()).getFullYear() : fYear;
+    const endY   = tYear === 9999 ? new Date().getFullYear() : tYear;
+    for (let y = startY; y <= endY; y++) {
+      for (let m = 0; m < 12; m++) {
+        const key = `${y}-${String(m + 1).padStart(2, '0')}`;
+        const { income, expense, net } = getMonthCash(key);
+        if (income > 0 || expense > 0) {
+          monthlyBreakdown.push({ label: `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]} ${y}`, income, expense, net });
+        }
+      }
+    }
+  }
+
+  // --- Payables & Receivables outstanding (current state, not period) ---
+  const payables    = entries.filter(e => e.type === 'payable'   && getBalance(e) > 0).sort((a, b) => getBalance(b) - getBalance(a));
+  const receivables = entries.filter(e => e.type === 'receivable' && getBalance(e) > 0).sort((a, b) => getBalance(b) - getBalance(a));
+
+  // --- Expenses grouped in period ---
+  function groupExpenses(keyFn, filterFn = () => true) {
+    const map = new Map();
+    let total = 0;
+    for (const t of cashInPeriod) {
+      if (t.type !== 'expense') continue;
+      if (!filterFn(t)) continue;
+      const key = keyFn(t);
+      if (!key) continue;
+      const cur = map.get(key) || { total: 0, count: 0 };
+      cur.total += Number(t.amount);
+      cur.count++;
+      map.set(key, cur);
+      total += Number(t.amount);
+    }
+    return { list: [...map.entries()].map(([k, v]) => ({ key: k, ...v, pct: total > 0 ? (v.total / total) * 100 : 0 })).sort((a, b) => b.total - a.total), total };
+  }
+  const catBreakdown     = groupExpenses(t => (t.category || '(no category)').trim(), t => !t.project);
+  const projectBreakdown = groupExpenses(t => t.project, t => !!t.project);
+  const personBreakdown  = groupExpenses(t => t.person,  t => !!t.person && !t.project);
+
+  // --- Balance snapshots (adjustments) in period ---
+  const snapshots = cashInPeriod.filter(t => t.type === 'adjustment').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  // --- Activity log in period ---
+  const activityInPeriod = logs.filter(l => {
+    const d = (l.timestamp || '').slice(0, 10);
+    return d >= from && d <= to;
+  }).slice(0, 200); // cap at 200
+
+  // Render sections
+  const preview = document.getElementById('fReportPreview');
+  const tableSection = (title, rows) => rows.length > 0
+    ? `<h4>${title}</h4><table>${rows}</table>`
+    : '';
+
+  // Summary section
+  const summaryHtml = `
+    <h4>Summary (current status)</h4>
+    <div class="history-summary" style="grid-template-columns:repeat(3,1fr);">
+      <div class="box"><div class="lbl">Receivable Balance</div>
+        <div class="val" style="color:var(--receivable);">${fmtMoney(totalRecv)}</div>
+        <div style="font-size:10px;color:var(--muted);">${cntRecv} pending</div></div>
+      <div class="box"><div class="lbl">Payable Balance</div>
+        <div class="val" style="color:var(--payable);">${fmtMoney(totalPay)}</div>
+        <div style="font-size:10px;color:var(--muted);">${cntPay} pending</div></div>
+      <div class="box"><div class="lbl">Net Position</div>
+        <div class="val" style="color:${netPosition >= 0 ? 'var(--receivable)' : 'var(--payable)'};">
+          ${netPosition >= 0 ? '+' : '−'}${fmtMoney(Math.abs(netPosition))}
+        </div></div>
+      <div class="box"><div class="lbl">Overdue Entries</div>
+        <div class="val" style="color:${overdue > 0 ? 'var(--warning)' : 'var(--muted)'};">${overdue}</div></div>
+      <div class="box"><div class="lbl">Cash Balance</div>
+        <div class="val" style="color:${cashBalance >= 0 ? 'var(--receivable)' : 'var(--payable)'};">${fmtMoney(cashBalance)}</div></div>
+      <div class="box"><div class="lbl">Locations</div>
+        <div class="val" style="font-size:12px;">${getAllLocationBalances().map(l => `${escapeHtml(l.location)}: ${fmtMoney(l.balance)}`).join('<br>') || '—'}</div></div>
+    </div>
+  `;
+
+  // Cash flow section
+  const cashFlowHtml = `
+    <h4>Cash Flow (${label})</h4>
+    <div class="history-summary" style="grid-template-columns:repeat(3,1fr);">
+      <div class="box"><div class="lbl">Income</div>
+        <div class="val" style="color:var(--receivable);">${fmtMoney(periodIncome)}</div></div>
+      <div class="box"><div class="lbl">Expense (non-project)</div>
+        <div class="val" style="color:var(--payable);">${fmtMoney(periodExpense)}</div></div>
+      <div class="box"><div class="lbl">Net</div>
+        <div class="val" style="color:${(periodIncome - periodExpense) >= 0 ? 'var(--receivable)' : 'var(--payable)'};">
+          ${periodIncome - periodExpense >= 0 ? '+' : '−'}${fmtMoney(Math.abs(periodIncome - periodExpense))}
+        </div></div>
+    </div>
+    ${monthlyBreakdown.length > 0 ? `
+      <table style="margin-top:12px;">
+        <thead><tr><th>Month</th><th class="num">Income</th><th class="num">Expense</th><th class="num">Net</th></tr></thead>
+        <tbody>
+          ${monthlyBreakdown.map(m => `
+            <tr>
+              <td>${m.label}</td>
+              <td class="num pos">${m.income > 0 ? fmtMoney(m.income) : '—'}</td>
+              <td class="num neg">${m.expense > 0 ? fmtMoney(m.expense) : '—'}</td>
+              <td class="num" style="color:${m.net >= 0 ? '#0a7a4a' : '#b91c1c'};">${m.net >= 0 ? '+' : '−'}${fmtMoney(Math.abs(m.net))}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    ` : ''}
+  `;
+
+  // Payables outstanding
+  const payablesHtml = payables.length > 0 ? `
+    <h4>Payables Outstanding (I owe)</h4>
+    <table>
+      <thead><tr><th>Party</th><th>Reason</th><th class="num">Total</th><th class="num">Paid</th><th class="num">Balance</th></tr></thead>
+      <tbody>
+        ${payables.map(e => `
+          <tr>
+            <td>${escapeHtml(e.party)}</td>
+            <td>${escapeHtml(e.description || '—')}</td>
+            <td class="num">${fmtMoney(getTotalOwed(e))}</td>
+            <td class="num pos">${fmtMoney(getPaid(e))}</td>
+            <td class="num neg"><strong>${fmtMoney(getBalance(e))}</strong></td>
+          </tr>
+        `).join('')}
+        <tr class="row-total">
+          <td colspan="4">Total</td>
+          <td class="num neg">${fmtMoney(totalPay)}</td>
+        </tr>
+      </tbody>
+    </table>
+  ` : '';
+
+  // Receivables outstanding
+  const receivablesHtml = receivables.length > 0 ? `
+    <h4>Receivables Outstanding (owed to me)</h4>
+    <table>
+      <thead><tr><th>Party</th><th>Reason</th><th class="num">Total</th><th class="num">Received</th><th class="num">Balance</th></tr></thead>
+      <tbody>
+        ${receivables.map(e => `
+          <tr>
+            <td>${escapeHtml(e.party)}</td>
+            <td>${escapeHtml(e.description || '—')}</td>
+            <td class="num">${fmtMoney(getTotalOwed(e))}</td>
+            <td class="num pos">${fmtMoney(getPaid(e))}</td>
+            <td class="num pos"><strong>${fmtMoney(getBalance(e))}</strong></td>
+          </tr>
+        `).join('')}
+        <tr class="row-total">
+          <td colspan="4">Total</td>
+          <td class="num pos">${fmtMoney(totalRecv)}</td>
+        </tr>
+      </tbody>
+    </table>
+  ` : '';
+
+  // Expense breakdown sections
+  const catHtml = catBreakdown.list.length > 0 ? `
+    <h4>Expenses by Category (${label})</h4>
+    <table>
+      <thead><tr><th>Category</th><th class="num">Count</th><th class="num">Amount</th><th class="num">% of Total</th></tr></thead>
+      <tbody>
+        ${catBreakdown.list.map(r => `
+          <tr>
+            <td>${escapeHtml(r.key)}</td>
+            <td class="num">${r.count}</td>
+            <td class="num neg">${fmtMoney(r.total)}</td>
+            <td class="num">${r.pct.toFixed(1)}%</td>
+          </tr>
+        `).join('')}
+        <tr class="row-total"><td colspan="2">Total</td><td class="num neg">${fmtMoney(catBreakdown.total)}</td><td></td></tr>
+      </tbody>
+    </table>
+  ` : '';
+
+  const projectHtml = projectBreakdown.list.length > 0 ? `
+    <h4>Expenses by Project (${label})</h4>
+    <table>
+      <thead><tr><th>Project</th><th class="num">Count</th><th class="num">Amount</th><th class="num">% of Total</th></tr></thead>
+      <tbody>
+        ${projectBreakdown.list.map(r => `
+          <tr>
+            <td>${escapeHtml(r.key)}</td>
+            <td class="num">${r.count}</td>
+            <td class="num neg">${fmtMoney(r.total)}</td>
+            <td class="num">${r.pct.toFixed(1)}%</td>
+          </tr>
+        `).join('')}
+        <tr class="row-total"><td colspan="2">Total</td><td class="num neg">${fmtMoney(projectBreakdown.total)}</td><td></td></tr>
+      </tbody>
+    </table>
+  ` : '';
+
+  const personHtml = personBreakdown.list.length > 0 ? `
+    <h4>Expenses by Person (${label})</h4>
+    <table>
+      <thead><tr><th>Person</th><th class="num">Count</th><th class="num">Amount</th><th class="num">% of Total</th></tr></thead>
+      <tbody>
+        ${personBreakdown.list.map(r => `
+          <tr>
+            <td>${escapeHtml(r.key)}</td>
+            <td class="num">${r.count}</td>
+            <td class="num neg">${fmtMoney(r.total)}</td>
+            <td class="num">${r.pct.toFixed(1)}%</td>
+          </tr>
+        `).join('')}
+        <tr class="row-total"><td colspan="2">Total</td><td class="num neg">${fmtMoney(personBreakdown.total)}</td><td></td></tr>
+      </tbody>
+    </table>
+  ` : '';
+
+  // Balance snapshots
+  const snapshotsHtml = snapshots.length > 0 ? `
+    <h4>Balance Snapshots / Remaining Set (${label})</h4>
+    <table>
+      <thead><tr><th>Date</th><th>Location</th><th>Note</th><th class="num">Set to</th></tr></thead>
+      <tbody>
+        ${snapshots.map(t => `
+          <tr>
+            <td>${fmtDate(t.date)}</td>
+            <td>${escapeHtml(t.location || 'Hand')}</td>
+            <td>${escapeHtml(t.note || '—')}</td>
+            <td class="num">${fmtMoney(t.amount)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  ` : '';
+
+  // Activity log
+  const activityHtml = activityInPeriod.length > 0 ? `
+    <h4>Activity Log (${label}) — ${activityInPeriod.length} events</h4>
+    <table>
+      <thead><tr><th style="width:130px;">When</th><th style="width:80px;">Action</th><th>Detail</th></tr></thead>
+      <tbody>
+        ${activityInPeriod.map(l => `
+          <tr>
+            <td style="font-size:11px;">${fmtDateTime(l.timestamp)}</td>
+            <td><strong>${escapeHtml(l.action)}</strong></td>
+            <td>${escapeHtml(l.detail)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  ` : '';
+
+  preview.innerHTML = `
+    <h3>Financial Report — ${label}</h3>
+    <div class="muted" style="font-size:11px;margin-bottom:14px;">
+      Period: ${fmtDate(from)} to ${fmtDate(to)} · Generated ${new Date().toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'short'})}
+    </div>
+    ${summaryHtml}
+    ${cashFlowHtml}
+    ${payablesHtml}
+    ${receivablesHtml}
+    ${catHtml}
+    ${projectHtml}
+    ${personHtml}
+    ${snapshotsHtml}
+    ${activityHtml}
+    ${payables.length === 0 && receivables.length === 0 && cashInPeriod.length === 0 && activityInPeriod.length === 0
+      ? `<div class="report-empty">No data in this period.</div>` : ''}
+  `;
+}
+
+function openFinancialReport() {
+  document.getElementById('fReportPeriod').value = 'thisMonth';
+  renderFinancialReport();
+  document.getElementById('fReportModalBackdrop').classList.add('open');
+}
+function closeFinancialReport() {
+  document.getElementById('fReportModalBackdrop').classList.remove('open');
+}
+
+function printFinancialReport() {
+  const label = periodLabel(document.getElementById('fReportPeriod').value);
+  const html = document.getElementById('fReportPreview').innerHTML;
+  const win = window.open('', '_blank', 'width=900,height=1000');
+  if (!win) { toast('Popup blocked', 'error'); return; }
+  win.document.write(`
+<!doctype html>
+<html><head><meta charset="utf-8"/>
+<title>Yelias Account Book — Financial Report ${label}</title>
+<style>
+  body { font-family: -apple-system,sans-serif; padding: 28px; max-width: 900px; margin: 0 auto; color:#111; background:#fff; }
+  h3 { font-size: 22px; margin: 0 0 6px; }
+  h4 { margin: 22px 0 10px; font-size: 12px; color: #555;
+       text-transform: uppercase; letter-spacing: 0.08em;
+       border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; page-break-inside: auto; }
+  tr { page-break-inside: avoid; }
+  th, td { padding: 7px 8px; text-align: left; border-bottom: 1px solid #eee; font-size: 12px; }
+  th { background: #f5f5f5; color: #333; font-weight: 600;
+       text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; }
+  td.num, th.num, .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .row-total td { font-weight: 700; border-top: 2px solid #333; border-bottom: none; padding-top: 8px; }
+  .history-summary { display: grid; gap: 10px; margin: 12px 0; grid-template-columns: repeat(3, 1fr); }
+  .box { border: 1px solid #ddd; padding: 10px; border-radius: 6px; text-align: center; }
+  .box .lbl { font-size: 10px; text-transform: uppercase; color: #555; }
+  .box .val { font-size: 15px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .muted { color: #888; }
+  .pos { color: #0a7a4a; }
+  .neg { color: #b91c1c; }
+  .report-empty { color: #888; font-style: italic; padding: 20px 0; }
+  @media print { body { padding: 0; } h4 { page-break-after: avoid; } }
+</style></head><body>${html}
+<script>window.onload=function(){setTimeout(function(){window.print();},250);};</` + `script>
+</body></html>`);
+  win.document.close();
+  log('EXPORT', `Financial report PDF · ${label}`);
+  renderAudit();
+}
+
 function printMonthly() {
   const html = document.getElementById('monthlyPreview').innerHTML;
   const from = document.getElementById('mFrom').value;
@@ -5224,8 +5619,14 @@ document.getElementById('btnClearFilters').addEventListener('click', () => {
   renderEntries();
 });
 
-document.getElementById('btnExportCsv').addEventListener('click', exportCsv);
-document.getElementById('btnExportPdf').addEventListener('click', exportPdf);
+// Financial Report modal
+document.getElementById('btnFinancialReport').addEventListener('click', openFinancialReport);
+document.getElementById('btnFReportClose').addEventListener('click', closeFinancialReport);
+document.getElementById('btnFReportPdf').addEventListener('click', printFinancialReport);
+document.getElementById('fReportPeriod').addEventListener('change', renderFinancialReport);
+document.getElementById('fReportModalBackdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'fReportModalBackdrop') closeFinancialReport();
+});
 
 // All parties modal
 document.getElementById('btnAllParties').addEventListener('click', openAllParties);
@@ -5456,6 +5857,7 @@ document.addEventListener('keydown', (e) => {
     closeAgingModal();
     closeMonthlyModal();
     closeCashModal();
+    closeFinancialReport();
     document.getElementById('newEntryDropdown').classList.remove('open');
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); openModal(); }
