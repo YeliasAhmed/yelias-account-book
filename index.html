@@ -1207,60 +1207,45 @@
           </div>
         </div>
 
-        <div class="collapsible" data-collapsed="true" data-key="person">
-          <div class="collapsible-header">
-            <div class="collapsible-title">
-              <span class="chevron">▾</span>
-              Expenses by Person
-              <span id="personSummary" class="collapsible-summary"></span>
-            </div>
-            <select id="personPeriod" class="btn sm collapsible-selector" style="padding:5px 10px;">
-              <option value="thisMonth">This month</option>
-              <option value="lastMonth">Last month</option>
-              <option value="last3">Last 3 months</option>
-              <option value="thisYear">This year</option>
-              <option value="all">All time</option>
-            </select>
-          </div>
-          <div id="cashPersonBreakdown" class="location-grid collapsible-content"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:8px;">
+          <h4 class="dash-list-title" style="flex:1;">Expenses by Person</h4>
+          <select id="personPeriod" class="btn sm" style="padding:5px 10px;">
+            <option value="thisMonth">This month</option>
+            <option value="lastMonth">Last month</option>
+            <option value="last3">Last 3 months</option>
+            <option value="thisYear">This year</option>
+            <option value="all">All time</option>
+          </select>
         </div>
+        <div id="personSummary" style="margin-bottom:12px;font-size:12px;color:var(--muted);"></div>
+        <div id="cashPersonBreakdown" class="location-grid"></div>
 
-        <div class="collapsible" data-collapsed="true" data-key="project">
-          <div class="collapsible-header">
-            <div class="collapsible-title">
-              <span class="chevron">▾</span>
-              Expenses by Project
-              <span id="projectSummary" class="collapsible-summary"></span>
-            </div>
-            <select id="projectPeriod" class="btn sm collapsible-selector" style="padding:5px 10px;">
-              <option value="all">All time</option>
-              <option value="thisMonth">This month</option>
-              <option value="lastMonth">Last month</option>
-              <option value="last3">Last 3 months</option>
-              <option value="thisYear">This year</option>
-            </select>
-          </div>
-          <div id="cashProjectBreakdown" class="location-grid collapsible-content"></div>
-          <div id="projectDetail" style="display:none;margin-top:16px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:8px;">
+          <h4 class="dash-list-title" style="flex:1;">Expenses by Project</h4>
+          <select id="projectPeriod" class="btn sm" style="padding:5px 10px;">
+            <option value="all">All time</option>
+            <option value="thisMonth">This month</option>
+            <option value="lastMonth">Last month</option>
+            <option value="last3">Last 3 months</option>
+            <option value="thisYear">This year</option>
+          </select>
         </div>
+        <div id="projectSummary" style="margin-bottom:12px;font-size:12px;color:var(--muted);"></div>
+        <div id="cashProjectBreakdown" class="location-grid"></div>
+        <div id="projectDetail" style="display:none;margin-top:16px;"></div>
 
-        <div class="collapsible" data-collapsed="true" data-key="category">
-          <div class="collapsible-header">
-            <div class="collapsible-title">
-              <span class="chevron">▾</span>
-              Spending by Category
-              <span id="categorySummary" class="collapsible-summary"></span>
-            </div>
-            <select id="catPeriod" class="btn sm collapsible-selector" style="padding:5px 10px;">
-              <option value="thisMonth">This month</option>
-              <option value="lastMonth">Last month</option>
-              <option value="last3">Last 3 months</option>
-              <option value="thisYear">This year</option>
-              <option value="all">All time</option>
-            </select>
-          </div>
-          <div id="cashCategoryBreakdown" class="collapsible-content"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:8px;">
+          <h4 class="dash-list-title" style="flex:1;">Spending by Category</h4>
+          <select id="catPeriod" class="btn sm" style="padding:5px 10px;">
+            <option value="thisMonth">This month</option>
+            <option value="lastMonth">Last month</option>
+            <option value="last3">Last 3 months</option>
+            <option value="thisYear">This year</option>
+            <option value="all">All time</option>
+          </select>
         </div>
+        <div id="categorySummary" style="margin-bottom:12px;font-size:12px;color:var(--muted);"></div>
+        <div id="cashCategoryBreakdown"></div>
       </div>
 
       <div class="panel dash-lists wide">
@@ -5788,16 +5773,6 @@ document.getElementById('cPerson').addEventListener('input', () => {
 });
 document.getElementById('personPeriod').addEventListener('change', renderCashPersonBreakdown);
 document.getElementById('projectPeriod').addEventListener('change', renderCashProjectBreakdown);
-
-// Collapsible sections — click header to toggle (except selectors)
-document.querySelectorAll('.collapsible-header').forEach(h => {
-  h.addEventListener('click', (e) => {
-    if (e.target.closest('.collapsible-selector')) return; // don't toggle when using dropdown
-    const section = h.closest('.collapsible');
-    const collapsed = section.getAttribute('data-collapsed') === 'true';
-    section.setAttribute('data-collapsed', collapsed ? 'false' : 'true');
-  });
-});
 document.getElementById('cashProjectBreakdown').addEventListener('click', (e) => {
   const card = e.target.closest('[data-act="project-drill"]');
   if (!card) return;
