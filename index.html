@@ -378,8 +378,8 @@
   }
   .payment-row {
     display: grid;
-    grid-template-columns: 20px 1fr auto auto;
-    gap: 12px;
+    grid-template-columns: 20px 1fr auto auto auto;
+    gap: 8px;
     align-items: center;
     padding: 10px 12px;
     border-radius: 6px;
@@ -3142,21 +3142,26 @@ function renderHistory(entryId) {
         </div>`;
     }
     // payment
-    const isPlanned = t.planned;
-    const isSel = histSelectedIds.has(t.id);
-    const tagText = isPlanned ? 'PLANNED' : (isRecv ? 'RECEIVED' : 'PAID');
-    const tagColor = isPlanned ? '#a5b4fc' : 'var(--success)';
-    const amtColor = isPlanned ? '#a5b4fc' : 'var(--success)';
+    const isPlanned  = t.planned;
+    const isLinked   = !!t.linkedCashId;
+    const isSel      = histSelectedIds.has(t.id);
+    const tagText    = isPlanned ? 'PLANNED' : (isLinked ? (isRecv ? 'RECEIVED 🔗' : 'PAID 🔗') : (isRecv ? 'RECEIVED' : 'PAID'));
+    const tagColor   = isPlanned ? '#a5b4fc' : (isLinked ? '#a5b4fc' : 'var(--success)');
+    const amtColor   = isPlanned ? '#a5b4fc' : 'var(--success)';
+    // For unlinked (real, non-planned) payments, offer a retroactive link button
+    const canRelink  = !isPlanned && !isLinked;
     return `
       <div class="payment-row${isSel ? ' selected' : ''}" style="${isPlanned ? 'opacity:0.75;border:1px dashed var(--border);' : ''}">
         <input type="checkbox" data-act="histsel" data-pid="${t.id}" data-kind="payment" ${isSel ? 'checked' : ''} />
         <div class="pay-meta">
           <div class="pay-date">${fmtDate(t.date)}
             <span style="font-size:10px;color:${tagColor};margin-left:4px;">${tagText}</span>
+            ${t.location ? `<span style="font-size:10px;color:var(--muted);margin-left:4px;">· ${escapeHtml(t.location)}</span>` : ''}
           </div>
           ${t.note ? `<div class="pay-note" title="${escapeHtml(t.note)}">${escapeHtml(t.note)}</div>` : ''}
         </div>
         <div class="pay-amount" style="color:${amtColor};">${isPlanned ? '~' : '−'}${fmtMoney(t.amount, entry.currency)}</div>
+        ${canRelink ? `<button class="btn sm" data-act="linkpay" data-pid="${t.id}" title="Link this payment to a cash location">🔗</button>` : ''}
         <button class="btn sm danger" data-act="delpay" data-pid="${t.id}">×</button>
       </div>`;
   }).join('');
@@ -6127,7 +6132,57 @@ document.getElementById('histList').addEventListener('click', (e) => {
   if (!btn) return;
   if (btn.dataset.act === 'delpay') deletePayment(histEntryId, btn.dataset.pid);
   if (btn.dataset.act === 'delchg') deleteCharge (histEntryId, btn.dataset.pid);
+  if (btn.dataset.act === 'linkpay') retroLinkPayment(histEntryId, btn.dataset.pid);
 });
+
+function retroLinkPayment(entryId, paymentId) {
+  const entry = entries.find(e => e.id === entryId);
+  if (!entry) return;
+  const p = (entry.payments || []).find(x => x.id === paymentId);
+  if (!p || p.linkedCashId) return;
+  const isRecv = entry.type === 'receivable';
+  const locations = getAllLocationBalances().map(l => l.location);
+  const known = ['Hand','Bank','bKash','Nagad','Rocket','Card', ...locations].filter((v,i,a) => v && a.indexOf(v) === i);
+  const suggestion = prefs.lastPaymentLocation || known[0] || 'Hand';
+  const chosen = prompt(
+    `Link this ${isRecv ? 'receipt' : 'payment'} of ${fmtMoney(p.amount, entry.currency)} to a cash location?\n\n` +
+    `Available: ${known.join(', ')}\n\n` +
+    `Type the location name (this will ${isRecv ? 'ADD to' : 'SUBTRACT from'} that wallet):`,
+    suggestion
+  );
+  if (!chosen) return;
+  const location = chosen.trim();
+  if (!location) return;
+
+  const linkedTx = {
+    id: uid(),
+    type: isRecv ? 'income' : 'expense',
+    amount: p.amount,
+    location,
+    category: isRecv ? 'Loan repayment received' : 'Loan repayment',
+    person: '',
+    project: '',
+    note: `${isRecv ? 'From' : 'To'} ${entry.party}${entry.description ? ' — ' + entry.description : ''}${p.note ? ' · ' + p.note : ''}`,
+    date: p.date,
+    createdAt: new Date().toISOString(),
+    linkedPaymentId: paymentId,
+    linkedEntryId: entry.id,
+  };
+  cashTx.push(linkedTx);
+  p.linkedCashId = linkedTx.id;
+  p.location     = location;
+  saveArr(STORE.cash, cashTx);
+  saveArr(STORE.entries, entries);
+  prefs.lastPaymentLocation = location;
+  savePrefs(prefs);
+  log('UPDATE',
+    `Retro-linked ${isRecv ? 'receipt' : 'payment'} · ${entry.party} · ${fmtMoney(p.amount, entry.currency)} ${isRecv ? 'in' : 'from'} ${location}`,
+    entry.id
+  );
+  toast(`Linked — ${location} now ${fmtMoney(getLocationBalance(location))}`);
+  renderAll();
+  renderHistory(entryId);
+}
 document.getElementById('histList').addEventListener('change', (e) => {
   const cb = e.target.closest('input[type="checkbox"][data-act="histsel"]');
   if (!cb) return;
