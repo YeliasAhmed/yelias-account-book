@@ -1517,7 +1517,7 @@
           <input type="text" id="pNote" placeholder="Optional (e.g. bank transfer, cash, cheque #1234)" />
         </div>
         <div class="form-group full">
-          <label for="pLocation">Cash location <span style="color:var(--muted);font-weight:400;">— যেখান থেকে গেল / যেখানে ঢুকল</span></label>
+          <label for="pLocation"><span id="pLocationLabel">Cash location</span> <span id="pLocationHelp" style="color:var(--muted);font-weight:400;"></span></label>
           <input type="text" id="pLocation" list="cashLocationList" placeholder="Pick a location" autocomplete="off" />
           <div class="cat-chips" id="pLocChips">
             <button type="button" class="cat-chip" data-loc="Hand">Hand</button>
@@ -1526,7 +1526,7 @@
             <button type="button" class="cat-chip" data-loc="Nagad">Nagad</button>
             <button type="button" class="cat-chip" data-loc="Rocket">Rocket</button>
             <button type="button" class="cat-chip" data-loc="Card">Card</button>
-            <button type="button" class="cat-chip" data-loc="" style="opacity:0.6;">— Skip (don't update cash) —</button>
+            <button type="button" class="cat-chip" data-loc="" style="opacity:0.6;" id="pLocSkipChip">— Skip (don't update cash) —</button>
           </div>
           <div id="pLocationHint" style="font-size:11px;color:var(--muted);margin-top:6px;"></div>
         </div>
@@ -2768,6 +2768,11 @@ function openPayModal(entryId, prefillAmount = null) {
   document.getElementById('btnPaySave').textContent = `Save ${verb}`;
   document.getElementById('btnPayFull').style.display = bal > 0 ? '' : 'none';
   document.getElementById('btnPayFull').textContent = isRecv ? 'Receive full balance' : 'Pay full balance';
+  // Dynamic label for the cash location field
+  document.getElementById('pLocationLabel').textContent = isRecv ? 'Add received money to' : 'Pay from';
+  document.getElementById('pLocationHelp').textContent  = isRecv
+    ? '— যেখানে টাকা জমা করবে (Cash / Bank / bKash / Nagad ...)'
+    : '— যেখান থেকে টাকা দিলে (Cash / Bank / bKash / Nagad ...)';
 
   document.getElementById('payModalBackdrop').classList.add('open');
   setTimeout(() => amtInput.focus(), 50);
@@ -2873,17 +2878,18 @@ function updatePayLocationHint() {
   if (!entry) { hint.textContent = ''; return; }
   const isRecv = entry.type === 'receivable';
   if (planned) {
-    hint.textContent = 'Planned payment — will not affect cash balance.';
+    hint.textContent = `Planned ${isRecv ? 'receipt' : 'payment'} — will not affect cash balance.`;
     return;
   }
   if (!loc) {
-    hint.innerHTML = `<span style="color:var(--warning);">⚠ No cash location — this payment will only update the ${isRecv ? 'receivable' : 'payable'} balance, not your wallet.</span>`;
+    hint.innerHTML = `<span style="color:var(--warning);">⚠ No location — the ${isRecv ? 'money received' : 'money paid'} will NOT be reflected in your wallet balances.</span>`;
     return;
   }
   const before = getLocationBalance(loc);
   const after  = isRecv ? before + amt : before - amt;
-  const color  = after < 0 ? 'var(--payable)' : 'var(--text)';
-  hint.innerHTML = `<span style="color:var(--muted);">${escapeHtml(loc)}: ${fmtMoney(before, entry.currency)} → </span><strong style="color:${color};">${fmtMoney(after, entry.currency)}</strong>`;
+  const color  = after < 0 ? 'var(--payable)' : (isRecv ? 'var(--receivable)' : 'var(--text)');
+  const arrow  = isRecv ? '↑' : '↓';
+  hint.innerHTML = `<span style="color:var(--muted);">${escapeHtml(loc)}: ${fmtMoney(before, entry.currency)} ${arrow} </span><strong style="color:${color};">${fmtMoney(after, entry.currency)}</strong>`;
 }
 
 function payFullBalance() {
