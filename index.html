@@ -1487,6 +1487,20 @@
             <option value="yearly">Yearly</option>
           </select>
         </div>
+        <div class="form-group full">
+          <label for="fCashLocation"><span id="fCashLocationLabel">Cash location</span> <span id="fCashLocationHelp" style="color:var(--muted);font-weight:400;"></span></label>
+          <input type="text" id="fCashLocation" list="cashLocationList" placeholder="Pick where money actually moved (optional)" autocomplete="off" />
+          <div class="cat-chips" id="fCashLocChips">
+            <button type="button" class="cat-chip" data-loc="Hand">Hand</button>
+            <button type="button" class="cat-chip" data-loc="Bank">Bank</button>
+            <button type="button" class="cat-chip" data-loc="bKash">bKash</button>
+            <button type="button" class="cat-chip" data-loc="Nagad">Nagad</button>
+            <button type="button" class="cat-chip" data-loc="Rocket">Rocket</button>
+            <button type="button" class="cat-chip" data-loc="Card">Card</button>
+            <button type="button" class="cat-chip" data-loc="" style="opacity:0.6;">— Skip (no cash) —</button>
+          </div>
+          <div id="fCashLocationHint" style="font-size:11px;color:var(--muted);margin-top:6px;"></div>
+        </div>
       </div>
       <input type="hidden" id="fCurrency" value="BDT" />
       <div class="modal-actions">
@@ -1565,6 +1579,19 @@
         <div class="form-group full">
           <label for="aNote">Reason</label>
           <input type="text" id="aNote" placeholder="Why is more owed? (e.g. Mother, Marriage, Monir Mama)" />
+        </div>
+        <div class="form-group full">
+          <label for="aLocation"><span id="aLocationLabel">Cash location</span> <span style="color:var(--muted);font-weight:400;">— optional, skip if no cash moved</span></label>
+          <input type="text" id="aLocation" list="cashLocationList" placeholder="Pick where money moved" autocomplete="off" />
+          <div class="cat-chips" id="aLocChips">
+            <button type="button" class="cat-chip" data-loc="Hand">Hand</button>
+            <button type="button" class="cat-chip" data-loc="Bank">Bank</button>
+            <button type="button" class="cat-chip" data-loc="bKash">bKash</button>
+            <button type="button" class="cat-chip" data-loc="Nagad">Nagad</button>
+            <button type="button" class="cat-chip" data-loc="Rocket">Rocket</button>
+            <button type="button" class="cat-chip" data-loc="Card">Card</button>
+            <button type="button" class="cat-chip" data-loc="" style="opacity:0.6;">— Skip —</button>
+          </div>
         </div>
       </div>
       <div class="modal-actions">
@@ -2541,6 +2568,10 @@ function openModal(entry = null) {
   document.getElementById('fCurrency').value    = DEFAULT_CURRENCY;
   document.getElementById('fInterest').value    = entry?.interestRate || '';
   document.getElementById('fRecurring').value   = entry?.recurring?.frequency || '';
+  document.getElementById('fCashLocation').value = '';
+  document.querySelectorAll('#fCashLocChips .cat-chip').forEach(c => c.classList.remove('active'));
+  updateNewEntryCashLabel();
+  updateNewEntryCashHint();
   const dl = document.getElementById('partyList');
   dl.innerHTML = getUniqueParties()
     .map(p => `<option value="${escapeHtml(p)}"></option>`)
@@ -2562,10 +2593,36 @@ function closeModal() {
   editingId = null;
 }
 
+function updateNewEntryCashLabel() {
+  const type = document.getElementById('fType').value;
+  const isRecv = type === 'receivable';
+  document.getElementById('fCashLocationLabel').textContent = isRecv
+    ? 'You gave the money from'  : 'You received the money in';
+  document.getElementById('fCashLocationHelp').textContent  = isRecv
+    ? '— যেখান থেকে টাকা দিলে (optional, skip if no cash moved)'
+    : '— যেখানে টাকা পেলে (optional, skip if no cash moved)';
+}
+
+function updateNewEntryCashHint() {
+  const hint = document.getElementById('fCashLocationHint');
+  if (!hint) return;
+  const type = document.getElementById('fType').value;
+  const loc  = document.getElementById('fCashLocation').value.trim();
+  const amt  = Number(document.getElementById('fAmount').value) || 0;
+  if (!loc) { hint.textContent = ''; return; }
+  const before = getLocationBalance(loc);
+  const isRecv = type === 'receivable';
+  const after  = isRecv ? before - amt : before + amt;
+  const color  = after < 0 ? 'var(--payable)' : 'var(--text)';
+  const arrow  = isRecv ? '↓' : '↑';
+  hint.innerHTML = `<span style="color:var(--muted);">${escapeHtml(loc)}: ${fmtMoney(before)} ${arrow} </span><strong style="color:${color};">${fmtMoney(after)}</strong>`;
+}
+
 function saveEntry(e) {
   e.preventDefault();
   const interestVal  = Number(document.getElementById('fInterest').value) || 0;
   const recurFreq    = document.getElementById('fRecurring').value;
+  const cashLocation = document.getElementById('fCashLocation').value.trim();
   const issuedAtIso  = dateStrToISO(document.getElementById('fDate').value);
   const data = {
     type:         document.getElementById('fType').value,
@@ -2609,7 +2666,33 @@ function saveEntry(e) {
       `${data.type} · ${data.party} · ${fmtMoney(data.amount, data.currency)}`,
       entry.id
     );
-    toast('Entry added');
+
+    // If a cash location was picked, create a linked cash tx to reflect the movement
+    if (cashLocation) {
+      const isRecv = data.type === 'receivable';
+      const linkedTx = {
+        id: uid(),
+        type: isRecv ? 'expense' : 'income',
+        amount: data.amount,
+        location: cashLocation,
+        category: isRecv ? 'Loan given' : 'Loan received',
+        person: '',
+        project: '',
+        note: `${isRecv ? 'Lent to' : 'Borrowed from'} ${data.party}${data.description ? ' — ' + data.description : ''}`,
+        date: data.issuedAt,
+        createdAt: new Date().toISOString(),
+        linkedEntryId: entry.id,
+        linkedEntryCreation: true,  // marks this as the entry-creation link
+      };
+      cashTx.push(linkedTx);
+      entry.linkedCashCreationId = linkedTx.id;
+      saveArr(STORE.cash, cashTx);
+      prefs.lastPaymentLocation = cashLocation;
+      savePrefs(prefs);
+      toast(`Entry added — ${cashLocation} ${isRecv ? '↓' : '↑'} ${fmtMoney(data.amount)} (now ${fmtMoney(getLocationBalance(cashLocation))})`);
+    } else {
+      toast('Entry added');
+    }
   }
 
   saveArr(STORE.entries, entries);
@@ -2931,6 +3014,10 @@ function openAddModal(entryId) {
   document.getElementById('aAmount').value = '';
   document.getElementById('aDate').value = todayLocalISO();
   document.getElementById('aNote').value = '';
+  document.getElementById('aLocation').value = '';
+  document.getElementById('aLocationLabel').textContent = isRecv
+    ? 'You gave the money from' : 'You received the money in';
+  document.querySelectorAll('#aLocChips .cat-chip').forEach(c => c.classList.remove('active'));
 
   document.getElementById('addModalBackdrop').classList.add('open');
   setTimeout(() => document.getElementById('aAmount').focus(), 50);
@@ -2955,24 +3042,53 @@ function saveCharge(e) {
     return;
   }
 
+  const location = document.getElementById('aLocation').value.trim();
+  const chargeId = uid();
   const charge = {
-    id: uid(),
+    id: chargeId,
     amount,
     date: dateStrToISO(dateIn),
     note,
+    location: location || undefined,
   };
   entry.charges = entry.charges || [];
   entry.charges.push(charge);
   entry.updatedAt = new Date().toISOString();
   saveArr(STORE.entries, entries);
 
+  // If a cash location is picked, create linked cash tx
+  if (location) {
+    const isRecv = entry.type === 'receivable';
+    const linkedTx = {
+      id: uid(),
+      type: isRecv ? 'expense' : 'income',
+      amount,
+      location,
+      category: isRecv ? 'Loan given (additional)' : 'Loan received (additional)',
+      person: '',
+      project: '',
+      note: `${isRecv ? 'Lent more to' : 'Borrowed more from'} ${entry.party}${note ? ' — ' + note : ''}`,
+      date: charge.date,
+      createdAt: new Date().toISOString(),
+      linkedEntryId: entry.id,
+      linkedChargeId: chargeId,
+    };
+    cashTx.push(linkedTx);
+    charge.linkedCashId = linkedTx.id;
+    saveArr(STORE.cash, cashTx);
+    saveArr(STORE.entries, entries);
+    prefs.lastPaymentLocation = location;
+    savePrefs(prefs);
+  }
+
   const newTotal = getTotalOwed(entry);
+  const cashSuffix = location ? ` · ${location} ${entry.type === 'receivable' ? '↓' : '↑'} ${fmtMoney(amount, entry.currency)}` : '';
   log('CHARGE',
-    `${entry.party} · +${fmtMoney(amount, entry.currency)}${note ? ' — ' + note : ''} · new total ${fmtMoney(newTotal, entry.currency)}`,
+    `${entry.party} · +${fmtMoney(amount, entry.currency)}${note ? ' — ' + note : ''}${cashSuffix} · new total ${fmtMoney(newTotal, entry.currency)}`,
     entry.id
   );
 
-  toast('Amount added');
+  toast(location ? `Amount added — ${location} now ${fmtMoney(getLocationBalance(location))}` : 'Amount added');
   closeAddModal();
   const histOpen = document.getElementById('histModalBackdrop').classList.contains('open');
   renderAll();
@@ -2984,12 +3100,18 @@ function deleteCharge(entryId, chargeId) {
   if (!entry) return;
   const c = (entry.charges || []).find(x => x.id === chargeId);
   if (!c) return;
-  if (!confirm(`Remove this added amount of ${fmtMoney(c.amount, entry.currency)}?`)) return;
+  const hasLinkedCash = !!c.linkedCashId;
+  const cashSuffix = hasLinkedCash ? '\n\nThe linked cash transaction will also be removed.' : '';
+  if (!confirm(`Remove this added amount of ${fmtMoney(c.amount, entry.currency)}?${cashSuffix}`)) return;
   entry.charges = entry.charges.filter(x => x.id !== chargeId);
   entry.updatedAt = new Date().toISOString();
   saveArr(STORE.entries, entries);
+  if (hasLinkedCash) {
+    cashTx = cashTx.filter(t => t.id !== c.linkedCashId);
+    saveArr(STORE.cash, cashTx);
+  }
   log('DELETE',
-    `Removed added amount · ${entry.party} · ${fmtMoney(c.amount, entry.currency)}`,
+    `Removed added amount · ${entry.party} · ${fmtMoney(c.amount, entry.currency)}${hasLinkedCash ? ' (and linked cash txn)' : ''}`,
     entry.id
   );
   toast('Removed');
@@ -6012,6 +6134,26 @@ document.getElementById('entryForm').addEventListener('submit', saveEntry);
 document.getElementById('modalBackdrop').addEventListener('click', (e) => {
   if (e.target.id === 'modalBackdrop') closeModal();
 });
+document.getElementById('fType').addEventListener('change', () => {
+  updateNewEntryCashLabel();
+  updateNewEntryCashHint();
+});
+document.getElementById('fAmount').addEventListener('input', updateNewEntryCashHint);
+document.getElementById('fCashLocation').addEventListener('input', () => {
+  const val = document.getElementById('fCashLocation').value.trim().toLowerCase();
+  document.querySelectorAll('#fCashLocChips .cat-chip').forEach(c => {
+    c.classList.toggle('active', (c.dataset.loc || '').toLowerCase() === val);
+  });
+  updateNewEntryCashHint();
+});
+document.getElementById('fCashLocChips').addEventListener('click', (e) => {
+  const chip = e.target.closest('button.cat-chip');
+  if (!chip) return;
+  document.getElementById('fCashLocation').value = chip.dataset.loc;
+  document.querySelectorAll('#fCashLocChips .cat-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  updateNewEntryCashHint();
+});
 
 document.getElementById('entriesBody').addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
@@ -6114,6 +6256,19 @@ document.getElementById('addForm').addEventListener('submit', saveCharge);
 document.getElementById('btnAddCancel').addEventListener('click', closeAddModal);
 document.getElementById('addModalBackdrop').addEventListener('click', (e) => {
   if (e.target.id === 'addModalBackdrop') closeAddModal();
+});
+document.getElementById('aLocChips').addEventListener('click', (e) => {
+  const chip = e.target.closest('button.cat-chip');
+  if (!chip) return;
+  document.getElementById('aLocation').value = chip.dataset.loc;
+  document.querySelectorAll('#aLocChips .cat-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+});
+document.getElementById('aLocation').addEventListener('input', () => {
+  const val = document.getElementById('aLocation').value.trim().toLowerCase();
+  document.querySelectorAll('#aLocChips .cat-chip').forEach(c => {
+    c.classList.toggle('active', (c.dataset.loc || '').toLowerCase() === val);
+  });
 });
 
 // History modal
