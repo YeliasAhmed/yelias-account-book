@@ -1094,6 +1094,13 @@
               <div class="dropdown-desc">Money coming in</div>
             </div>
           </button>
+          <button class="dropdown-item" data-action="transfer">
+            <span class="dropdown-icon" style="color:#67e8f9;">↔️</span>
+            <div>
+              <div class="dropdown-title">Transfer Money</div>
+              <div class="dropdown-desc">Move between Hand / Bank / bKash / etc.</div>
+            </div>
+          </button>
           <button class="dropdown-item" data-action="adjustment">
             <span class="dropdown-icon" style="color:#a5b4fc;">🏦</span>
             <div>
@@ -1174,6 +1181,7 @@
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn sm" id="btnAddIncome">+ Add Income</button>
             <button class="btn sm primary" id="btnAddExpense">+ Log Expense</button>
+            <button class="btn sm" id="btnTransfer">↔ Transfer</button>
             <button class="btn sm" id="btnSetBalance">= Set Remaining</button>
           </div>
         </div>
@@ -1719,6 +1727,7 @@
           <select id="cType" required>
             <option value="expense">Expense (money out)</option>
             <option value="income">Income (money in)</option>
+            <option value="transfer">Transfer (move between locations)</option>
             <option value="adjustment">Set Remaining (balance snapshot)</option>
           </select>
         </div>
@@ -1769,11 +1778,37 @@
             <button type="button" class="cat-chip" data-cat="Miscellaneous">Miscellaneous</button>
           </div>
         </div>
-        <div class="form-group full">
+        <div class="form-group full" id="cLocationGroup">
           <label for="cLocation">Location <span style="color:var(--muted);font-weight:400;">— where the money is / came from</span></label>
           <input type="text" id="cLocation" list="cashLocationList" placeholder="Hand, Bank, bKash..." autocomplete="off" />
           <datalist id="cashLocationList"></datalist>
           <div class="cat-chips" id="locChips">
+            <button type="button" class="cat-chip" data-loc="Hand">Hand (cash)</button>
+            <button type="button" class="cat-chip" data-loc="Bank">Bank</button>
+            <button type="button" class="cat-chip" data-loc="bKash">bKash</button>
+            <button type="button" class="cat-chip" data-loc="Nagad">Nagad</button>
+            <button type="button" class="cat-chip" data-loc="Rocket">Rocket</button>
+            <button type="button" class="cat-chip" data-loc="Card">Card</button>
+            <button type="button" class="cat-chip" data-loc="Other">Other</button>
+          </div>
+        </div>
+        <div class="form-group full" id="cFromLocationGroup" style="display:none;">
+          <label for="cFromLocation">From <span style="color:var(--muted);font-weight:400;">— source location</span></label>
+          <input type="text" id="cFromLocation" list="cashLocationList" placeholder="Hand, Bank, bKash..." autocomplete="off" />
+          <div class="cat-chips" id="fromLocChips">
+            <button type="button" class="cat-chip" data-loc="Hand">Hand (cash)</button>
+            <button type="button" class="cat-chip" data-loc="Bank">Bank</button>
+            <button type="button" class="cat-chip" data-loc="bKash">bKash</button>
+            <button type="button" class="cat-chip" data-loc="Nagad">Nagad</button>
+            <button type="button" class="cat-chip" data-loc="Rocket">Rocket</button>
+            <button type="button" class="cat-chip" data-loc="Card">Card</button>
+            <button type="button" class="cat-chip" data-loc="Other">Other</button>
+          </div>
+        </div>
+        <div class="form-group full" id="cToLocationGroup" style="display:none;">
+          <label for="cToLocation">To <span style="color:var(--muted);font-weight:400;">— destination location</span></label>
+          <input type="text" id="cToLocation" list="cashLocationList" placeholder="Hand, Bank, bKash..." autocomplete="off" />
+          <div class="cat-chips" id="toLocChips">
             <button type="button" class="cat-chip" data-loc="Hand">Hand (cash)</button>
             <button type="button" class="cat-chip" data-loc="Bank">Bank</button>
             <button type="button" class="cat-chip" data-loc="bKash">bKash</button>
@@ -2105,13 +2140,7 @@ function computeLocationBalanceFromTxns(txns) {
 }
 
 function getCashBalance() {
-  const locations = new Set(cashTx.map(t => t.location || 'Hand'));
-  let total = 0;
-  for (const loc of locations) {
-    const txns = cashTx.filter(t => (t.location || 'Hand') === loc);
-    total += computeLocationBalanceFromTxns(txns);
-  }
-  return total;
+  return getAllLocationBalances().reduce((sum, x) => sum + x.balance, 0);
 }
 
 function getMonthCash(monthKey) {
@@ -4232,27 +4261,38 @@ function renderCashRecent() {
     return;
   }
   wrap.innerHTML = top.map(t => {
-    const isIncome = t.type === 'income';
-    const isAdj    = t.type === 'adjustment';
+    const isIncome   = t.type === 'income';
+    const isAdj      = t.type === 'adjustment';
+    const isTransfer = t.type === 'transfer';
     let color, sign;
-    if (isAdj)         { color = '#a5b4fc'; sign = '='; }
+    if (isTransfer)    { color = '#67e8f9'; sign = '↔'; }
+    else if (isAdj)    { color = '#a5b4fc'; sign = '='; }
     else if (isIncome) { color = 'var(--receivable)'; sign = '+'; }
     else               { color = 'var(--payable)'; sign = '−'; }
     const loc = t.location || 'Hand';
-    const defaultLabel = isAdj ? `Balance snapshot: ${loc}` : (isIncome ? 'Income' : 'Expense');
+    let defaultLabel, metaText;
+    if (isTransfer) {
+      defaultLabel = `Transfer from ${t.fromLocation} to ${t.toLocation}`;
+      metaText     = `${fmtDate(t.date)} · ${escapeHtml(t.fromLocation)} → ${escapeHtml(t.toLocation)}`;
+    } else {
+      defaultLabel = isAdj ? `Balance snapshot: ${loc}` : (isIncome ? 'Income' : 'Expense');
+      metaText     = `${fmtDate(t.date)} · ${escapeHtml(loc)}`;
+    }
     return `
       <div class="cash-item">
         <div class="info">
           <div class="name">
+            ${isTransfer ? `<span class="cat-badge" style="background:rgba(6,182,212,0.15);color:#67e8f9;">TRANSFER</span>` : ''}
             ${isAdj ? `<span class="cat-badge" style="background:rgba(99,102,241,0.15);color:#a5b4fc;">SNAPSHOT</span>` : ''}
             ${t.category ? `<span class="cat-badge">${escapeHtml(t.category)}</span>` : ''}
             ${t.project ? `<span class="cat-badge" style="background:rgba(16,185,129,0.15);color:var(--receivable);">${escapeHtml(t.project)}</span>` : ''}
             ${t.person ? `<span class="cat-badge" style="background:rgba(245,158,11,0.15);color:var(--warning);">${escapeHtml(t.person)}</span>` : ''}
             ${escapeHtml(t.note || defaultLabel)}
           </div>
-          <div class="meta">${fmtDate(t.date)} · ${escapeHtml(loc)}</div>
+          <div class="meta">${metaText}</div>
         </div>
         <div class="amt" style="color:${color};">${sign}${fmtMoney(t.amount)}</div>
+        <button class="del" data-act="editcash" data-id="${t.id}" title="Edit this transaction" style="margin-right:2px;">✎</button>
         <button class="del" data-act="delcash" data-id="${t.id}" title="Delete this transaction">×</button>
       </div>`;
   }).join('');
@@ -4292,20 +4332,28 @@ function getCashCategories() {
 }
 
 let cashModalMode = 'expense';
-function openCashModal(mode = 'expense') {
+let cashEditingId = null;
+
+function openCashModal(mode = 'expense', existingTx = null) {
   cashModalMode = mode;
-  const title = mode === 'income' ? 'Add Income'
+  cashEditingId = existingTx ? existingTx.id : null;
+  const title = existingTx ? 'Edit Transaction'
+              : mode === 'income'     ? 'Add Income'
+              : mode === 'transfer'   ? 'Transfer Money'
               : mode === 'adjustment' ? 'Set Remaining Balance'
               : 'Log Expense';
   document.getElementById('cashModalTitle').textContent = title;
   document.getElementById('cType').value = mode;
-  document.getElementById('cAmount').value = '';
-  document.getElementById('cCategory').value = '';
-  document.getElementById('cDate').value = todayLocalISO();
-  document.getElementById('cNote').value = '';
-  document.getElementById('cLocation').value = '';
-  document.getElementById('cPerson').value = '';
-  document.getElementById('cProject').value = '';
+  document.getElementById('cAmount').value    = existingTx ? existingTx.amount : '';
+  document.getElementById('cCategory').value  = existingTx?.category  || '';
+  document.getElementById('cDate').value      = existingTx ? (existingTx.date || '').slice(0, 10) : todayLocalISO();
+  document.getElementById('cNote').value      = existingTx?.note      || '';
+  document.getElementById('cLocation').value  = existingTx?.location  || '';
+  document.getElementById('cPerson').value    = existingTx?.person    || '';
+  document.getElementById('cProject').value   = existingTx?.project   || '';
+  document.getElementById('cFromLocation').value = existingTx?.fromLocation || '';
+  document.getElementById('cToLocation').value   = existingTx?.toLocation   || '';
+  document.getElementById('btnCashSave').textContent = existingTx ? 'Update' : 'Save';
   const dl = document.getElementById('cashCategoryList');
   dl.innerHTML = getCashCategories().map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
   const ll = document.getElementById('cashLocationList');
@@ -4320,10 +4368,7 @@ function openCashModal(mode = 'expense') {
     : `<span style="color:var(--muted);font-size:11px;padding:4px 0;">Common people you add will appear here as chips</span>`;
   const pjl = document.getElementById('cashProjectList');
   pjl.innerHTML = getCashProjects().map(p => `<option value="${escapeHtml(p)}"></option>`).join('');
-  document.querySelectorAll('#catChips .cat-chip').forEach(c => c.classList.remove('active'));
-  document.querySelectorAll('#locChips .cat-chip').forEach(c => c.classList.remove('active'));
-  document.querySelectorAll('#personChips .cat-chip').forEach(c => c.classList.remove('active'));
-  document.querySelectorAll('#projectChips .cat-chip').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('#catChips .cat-chip, #locChips .cat-chip, #fromLocChips .cat-chip, #toLocChips .cat-chip, #personChips .cat-chip, #projectChips .cat-chip').forEach(c => c.classList.remove('active'));
   updateCashModalPreview();
   document.getElementById('cashModalBackdrop').classList.add('open');
   setTimeout(() => document.getElementById('cAmount').focus(), 50);
@@ -4332,30 +4377,49 @@ function openCashModal(mode = 'expense') {
 function updateCashModalPreview() {
   const amt  = Number(document.getElementById('cAmount').value) || 0;
   const type = document.getElementById('cType').value;
-  const loc  = document.getElementById('cLocation').value.trim() || 'Hand';
-  const currentBal = getCashBalance();
-  const locBal = getLocationBalance(loc);
-
-  // Update the Amount field label based on type
-  const amountLabel = document.getElementById('cAmountLabel');
-  if (type === 'adjustment') amountLabel.textContent = 'New Balance (Remaining) *';
-  else                       amountLabel.textContent = 'Amount *';
-
-  // Hide category, person and project fields for adjustment / balance snapshot
+  const isTransfer = type === 'transfer';
   const isAdj = type === 'adjustment';
-  document.getElementById('cCategoryGroup').style.display = isAdj ? 'none' : '';
-  document.getElementById('cPersonGroup').style.display   = isAdj ? 'none' : '';
-  document.getElementById('cProjectGroup').style.display  = isAdj ? 'none' : '';
-  if (isAdj) {
-    document.getElementById('cCategory').value = '';
-    document.getElementById('cPerson').value   = '';
-    document.getElementById('cProject').value  = '';
+
+  // Update the Amount field label
+  const amountLabel = document.getElementById('cAmountLabel');
+  if (isAdj)      amountLabel.textContent = 'New Balance (Remaining) *';
+  else            amountLabel.textContent = 'Amount *';
+
+  // Hide category/person/project for adjustment AND transfer
+  const hideExtras = isAdj || isTransfer;
+  document.getElementById('cCategoryGroup').style.display = hideExtras ? 'none' : '';
+  document.getElementById('cPersonGroup').style.display   = hideExtras ? 'none' : '';
+  document.getElementById('cProjectGroup').style.display  = hideExtras ? 'none' : '';
+
+  // Show single location field OR from/to for transfer
+  document.getElementById('cLocationGroup').style.display     = isTransfer ? 'none' : '';
+  document.getElementById('cFromLocationGroup').style.display = isTransfer ? '' : 'none';
+  document.getElementById('cToLocationGroup').style.display   = isTransfer ? '' : 'none';
+
+  // House-development chips
+  const currentProject = document.getElementById('cProject').value.trim().toLowerCase();
+  document.getElementById('houseCatChips').style.display = (!hideExtras && currentProject === 'house development') ? 'flex' : 'none';
+
+  const currentBal = getCashBalance();
+
+  if (isTransfer) {
+    const from = document.getElementById('cFromLocation').value.trim() || 'Hand';
+    const to   = document.getElementById('cToLocation').value.trim()   || 'Bank';
+    const fromBal = getLocationBalance(from);
+    const toBal   = getLocationBalance(to);
+    document.getElementById('cashModalPreview').innerHTML = `
+      <div class="box"><div class="lbl">${escapeHtml(from)} — Current → After</div>
+        <div class="val" style="color:${(fromBal - amt) < 0 ? 'var(--payable)' : ''};">${fmtMoney(fromBal)} → ${fmtMoney(fromBal - amt)}</div></div>
+      <div class="box"><div class="lbl">${escapeHtml(to)} — Current → After</div>
+        <div class="val" style="color:var(--receivable);">${fmtMoney(toBal)} → ${fmtMoney(toBal + amt)}</div></div>
+      <div class="box"><div class="lbl">Total Balance (unchanged)</div>
+        <div class="val">${fmtMoney(currentBal)}</div></div>
+    `;
+    return;
   }
 
-  // Show house-development-specific category chips when the project matches
-  const currentProject = document.getElementById('cProject').value.trim().toLowerCase();
-  document.getElementById('houseCatChips').style.display = currentProject === 'house development' ? 'flex' : 'none';
-
+  const loc  = document.getElementById('cLocation').value.trim() || 'Hand';
+  const locBal = getLocationBalance(loc);
   let newLoc, afterLabel;
   if (type === 'income')          { newLoc = locBal + amt; afterLabel = `After +${fmtMoney(amt)}`; }
   else if (type === 'expense')    { newLoc = locBal - amt; afterLabel = `After −${fmtMoney(amt)}`; }
@@ -4372,6 +4436,7 @@ function updateCashModalPreview() {
 }
 function closeCashModal() {
   document.getElementById('cashModalBackdrop').classList.remove('open');
+  cashEditingId = null;
 }
 
 function saveCashTx(e) {
@@ -4384,16 +4449,22 @@ function saveCashTx(e) {
   const project = document.getElementById('cProject').value.trim();
   const dateIn = document.getElementById('cDate').value;
   const note = document.getElementById('cNote').value.trim();
+  const fromLocation = document.getElementById('cFromLocation').value.trim();
+  const toLocation   = document.getElementById('cToLocation').value.trim();
 
-  // For income/expense, amount must be > 0. For adjustment, 0 is valid (setting balance to zero).
+  // Validation
   if (type === 'adjustment') {
     if (amount < 0 || Number.isNaN(amount)) { toast('Enter a valid remaining balance', 'error'); return; }
   } else {
     if (!amount || amount <= 0) { toast('Enter a positive amount', 'error'); return; }
   }
+  if (type === 'transfer') {
+    if (!fromLocation || !toLocation) { toast('Pick both From and To locations', 'error'); return; }
+    if (fromLocation === toLocation)   { toast('From and To must be different', 'error'); return; }
+  }
 
-  const tx = {
-    id: uid(),
+  const isEdit = !!cashEditingId;
+  const baseTx = {
     type,
     amount,
     category,
@@ -4401,22 +4472,47 @@ function saveCashTx(e) {
     person,
     project,
     note,
+    fromLocation: type === 'transfer' ? fromLocation : undefined,
+    toLocation:   type === 'transfer' ? toLocation   : undefined,
     date: dateStrToISO(dateIn).slice(0, 10) + 'T12:00:00.000Z',
-    createdAt: new Date().toISOString(),
   };
-  cashTx.push(tx);
+
+  let tx;
+  if (isEdit) {
+    const idx = cashTx.findIndex(x => x.id === cashEditingId);
+    if (idx < 0) { toast('Transaction not found', 'error'); return; }
+    tx = { ...cashTx[idx], ...baseTx, updatedAt: new Date().toISOString() };
+    // Purge stale fields (e.g. switched from transfer to expense, don't keep fromLocation)
+    if (type !== 'transfer') { delete tx.fromLocation; delete tx.toLocation; }
+    cashTx[idx] = tx;
+  } else {
+    tx = { id: uid(), ...baseTx, createdAt: new Date().toISOString() };
+    cashTx.push(tx);
+  }
   saveArr(STORE.cash, cashTx);
 
-  const typeLabel = type === 'income' ? 'Income' : (type === 'expense' ? 'Expense' : 'Balance snapshot');
-  log('CREATE',
-    `${typeLabel} · ${location} · ${category || '(no category)'}${person ? ' · for ' + person : ''} · ${fmtMoney(amount)}${note ? ' — ' + note : ''}`,
-    tx.id
-  );
-  const finalBal = getLocationBalance(location);
-  toast(type === 'adjustment'
-    ? `${location} remaining set to ${fmtMoney(finalBal)}`
-    : `${typeLabel} saved — ${location} now ${fmtMoney(finalBal)}`
-  );
+  const typeLabel = ({
+    income: 'Income', expense: 'Expense',
+    transfer: 'Transfer', adjustment: 'Balance snapshot',
+  })[type] || 'Transaction';
+
+  let logDetail;
+  if (type === 'transfer') {
+    logDetail = `${fromLocation} → ${toLocation} · ${fmtMoney(amount)}${note ? ' — ' + note : ''}`;
+  } else {
+    logDetail = `${location} · ${category || '(no category)'}${person ? ' · for ' + person : ''} · ${fmtMoney(amount)}${note ? ' — ' + note : ''}`;
+  }
+  log(isEdit ? 'UPDATE' : 'CREATE', `${typeLabel} · ${logDetail}`, tx.id);
+
+  let toastMsg;
+  if (type === 'transfer') {
+    toastMsg = `Transferred ${fmtMoney(amount)} from ${fromLocation} to ${toLocation}`;
+  } else if (type === 'adjustment') {
+    toastMsg = `${location} remaining set to ${fmtMoney(getLocationBalance(location))}`;
+  } else {
+    toastMsg = `${typeLabel} ${isEdit ? 'updated' : 'saved'} — ${location} now ${fmtMoney(getLocationBalance(location))}`;
+  }
+  toast(toastMsg);
   closeCashModal();
   renderCashPanel();
   updateSummary();
@@ -4446,12 +4542,41 @@ function getCashLocations() {
 }
 
 function getLocationBalance(locationName) {
-  const txns = cashTx.filter(t => (t.location || 'Hand') === locationName);
-  return computeLocationBalanceFromTxns(txns);
+  // Include txns where this location is the primary location OR involved in a transfer
+  const txns = cashTx.filter(t => {
+    if (t.type === 'transfer') return t.fromLocation === locationName || t.toLocation === locationName;
+    return (t.location || 'Hand') === locationName;
+  });
+  const sorted = [...txns].sort((a, b) =>
+    (a.date || '').localeCompare(b.date || '') ||
+    (a.createdAt || '').localeCompare(b.createdAt || '')
+  );
+  let bal = 0;
+  for (const t of sorted) {
+    if (t.type === 'transfer') {
+      if (t.fromLocation === locationName) bal -= Number(t.amount);
+      if (t.toLocation   === locationName) bal += Number(t.amount);
+    } else if (t.type === 'income') {
+      bal += Number(t.amount);
+    } else if (t.type === 'expense') {
+      bal -= Number(t.amount);
+    } else if (t.type === 'adjustment') {
+      bal  = Number(t.amount);
+    }
+  }
+  return bal;
 }
 
 function getAllLocationBalances() {
-  const locations = new Set(cashTx.map(t => t.location || 'Hand'));
+  const locations = new Set();
+  for (const t of cashTx) {
+    if (t.type === 'transfer') {
+      if (t.fromLocation) locations.add(t.fromLocation);
+      if (t.toLocation)   locations.add(t.toLocation);
+    } else {
+      locations.add(t.location || 'Hand');
+    }
+  }
   return [...locations]
     .map(loc => ({ location: loc, balance: getLocationBalance(loc) }))
     .sort((a, b) => b.balance - a.balance);
@@ -5652,9 +5777,10 @@ document.getElementById('newEntryMenu').addEventListener('click', (e) => {
   if (!item) return;
   newEntryDropdown.classList.remove('open');
   const act = item.dataset.action;
-  if (act === 'entry')     openModal();
-  if (act === 'expense')   openCashModal('expense');
-  if (act === 'income')    openCashModal('income');
+  if (act === 'entry')      openModal();
+  if (act === 'expense')    openCashModal('expense');
+  if (act === 'income')     openCashModal('income');
+  if (act === 'transfer')   openCashModal('transfer');
   if (act === 'adjustment') openCashModal('adjustment');
 });
 document.addEventListener('click', (e) => {
@@ -5856,6 +5982,7 @@ document.getElementById('dashListsIncludeSettled').addEventListener('change', re
 // Cash flow
 document.getElementById('btnAddIncome').addEventListener('click', () => openCashModal('income'));
 document.getElementById('btnAddExpense').addEventListener('click', () => openCashModal('expense'));
+document.getElementById('btnTransfer').addEventListener('click', () => openCashModal('transfer'));
 document.getElementById('btnSetBalance').addEventListener('click', () => openCashModal('adjustment'));
 document.getElementById('btnCashCancel').addEventListener('click', closeCashModal);
 document.getElementById('cashForm').addEventListener('submit', saveCashTx);
@@ -5863,9 +5990,14 @@ document.getElementById('cashModalBackdrop').addEventListener('click', (e) => {
   if (e.target.id === 'cashModalBackdrop') closeCashModal();
 });
 document.getElementById('cashRecent').addEventListener('click', (e) => {
-  const b = e.target.closest('button[data-act="delcash"]');
+  const b = e.target.closest('button[data-act]');
   if (!b) return;
-  deleteCashTx(b.dataset.id);
+  const id = b.dataset.id;
+  if (b.dataset.act === 'delcash')  deleteCashTx(id);
+  if (b.dataset.act === 'editcash') {
+    const tx = cashTx.find(x => x.id === id);
+    if (tx) openCashModal(tx.type, tx);
+  }
 });
 document.getElementById('btnCashClear').addEventListener('click', clearAllCash);
 document.getElementById('catPeriod').addEventListener('change', renderCashCategoryBreakdown);
@@ -5886,21 +6018,26 @@ document.getElementById('cCategory').addEventListener('input', () => {
     c.classList.toggle('active', c.dataset.cat.toLowerCase() === val);
   });
 });
-document.getElementById('locChips').addEventListener('click', (e) => {
-  const chip = e.target.closest('button.cat-chip');
-  if (!chip) return;
-  document.getElementById('cLocation').value = chip.dataset.loc;
-  document.querySelectorAll('#locChips .cat-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  updateCashModalPreview();
-});
-document.getElementById('cLocation').addEventListener('input', () => {
-  const val = document.getElementById('cLocation').value.trim().toLowerCase();
-  document.querySelectorAll('#locChips .cat-chip').forEach(c => {
-    c.classList.toggle('active', c.dataset.loc.toLowerCase() === val);
+function bindLocChipRow(rowId, inputId) {
+  document.getElementById(rowId).addEventListener('click', (e) => {
+    const chip = e.target.closest('button.cat-chip');
+    if (!chip) return;
+    document.getElementById(inputId).value = chip.dataset.loc;
+    document.querySelectorAll(`#${rowId} .cat-chip`).forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    updateCashModalPreview();
   });
-  updateCashModalPreview();
-});
+  document.getElementById(inputId).addEventListener('input', () => {
+    const val = document.getElementById(inputId).value.trim().toLowerCase();
+    document.querySelectorAll(`#${rowId} .cat-chip`).forEach(c => {
+      c.classList.toggle('active', c.dataset.loc.toLowerCase() === val);
+    });
+    updateCashModalPreview();
+  });
+}
+bindLocChipRow('locChips',     'cLocation');
+bindLocChipRow('fromLocChips', 'cFromLocation');
+bindLocChipRow('toLocChips',   'cToLocation');
 document.getElementById('cAmount').addEventListener('input',  updateCashModalPreview);
 document.getElementById('cType').addEventListener('change',   updateCashModalPreview);
 document.getElementById('personChips').addEventListener('click', (e) => {
