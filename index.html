@@ -3980,6 +3980,98 @@ function closeBreakdownDetail() {
   document.getElementById('breakdownDetailBackdrop').classList.remove('open');
 }
 
+function openLocationDetail(locationName) {
+  const balance = getLocationBalance(locationName);
+  const balColor = balance < 0 ? 'var(--payable)' : (balance > 0 ? 'var(--receivable)' : 'var(--muted)');
+
+  // Get all txns involving this location
+  const txns = cashTx.filter(t => {
+    if (t.type === 'transfer') return t.fromLocation === locationName || t.toLocation === locationName;
+    return (t.location || 'Hand') === locationName;
+  }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  document.getElementById('breakdownDetailTitle').textContent = `${locationName} — Details`;
+
+  const rows = txns.map(t => {
+    let sign, color, dispAmt, typeBadge;
+    if (t.type === 'transfer') {
+      // For transfers, show direction relative to this location
+      if (t.fromLocation === locationName) { sign = '−'; color = 'var(--payable)'; }
+      else                                  { sign = '+'; color = 'var(--receivable)'; }
+      dispAmt = `${sign}${fmtMoney(t.amount)}`;
+      typeBadge = `<span class="cat-badge" style="background:rgba(6,182,212,0.15);color:#67e8f9;">TRANSFER</span>`;
+    } else if (t.type === 'income') {
+      sign = '+'; color = 'var(--receivable)';
+      dispAmt = `${sign}${fmtMoney(t.amount)}`;
+      typeBadge = `<span class="cat-badge" style="background:rgba(16,185,129,0.15);color:var(--receivable);">INCOME</span>`;
+    } else if (t.type === 'adjustment') {
+      color = '#a5b4fc';
+      dispAmt = `=${fmtMoney(t.amount)}`;
+      typeBadge = `<span class="cat-badge" style="background:rgba(99,102,241,0.15);color:#a5b4fc;">SNAPSHOT</span>`;
+    } else {
+      sign = '−'; color = 'var(--payable)';
+      dispAmt = `${sign}${fmtMoney(t.amount)}`;
+      typeBadge = `<span class="cat-badge">EXPENSE</span>`;
+    }
+
+    let detailCol;
+    if (t.type === 'transfer') {
+      detailCol = `${escapeHtml(t.fromLocation)} → ${escapeHtml(t.toLocation)}`;
+    } else {
+      const parts = [];
+      if (t.category) parts.push(escapeHtml(t.category));
+      if (t.person)   parts.push('For: ' + escapeHtml(t.person));
+      if (t.project)  parts.push('Project: ' + escapeHtml(t.project));
+      detailCol = parts.length > 0 ? parts.join(' · ') : '—';
+    }
+
+    return `
+      <tr data-txid="${t.id}">
+        <td>${fmtDate(t.date)}</td>
+        <td>${typeBadge}</td>
+        <td>${escapeHtml(t.note || '—')}</td>
+        <td>${detailCol}</td>
+        <td class="num" style="color:${color};">${dispAmt}</td>
+        <td style="text-align:right;white-space:nowrap;">
+          <button class="btn sm" data-act="loc-edit" data-id="${t.id}" data-loc="${escapeHtml(locationName)}" title="Edit">✎</button>
+          <button class="btn sm danger" data-act="loc-del" data-id="${t.id}" data-loc="${escapeHtml(locationName)}" title="Delete">×</button>
+        </td>
+      </tr>`;
+  }).join('');
+
+  document.getElementById('breakdownDetailContent').innerHTML = `
+    <div class="history-summary" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px;">
+      <div class="box"><div class="lbl">Current Balance</div>
+        <div class="val" style="color:${balColor};">${fmtMoney(balance)}</div></div>
+      <div class="box"><div class="lbl">Transactions</div>
+        <div class="val">${txns.length}</div></div>
+      <div class="box"><div class="lbl">Quick actions</div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center;margin-top:4px;">
+          <button class="btn sm" data-act="loc-add-income" data-loc="${escapeHtml(locationName)}">+ Income</button>
+          <button class="btn sm primary" data-act="loc-add-expense" data-loc="${escapeHtml(locationName)}">+ Expense</button>
+          <button class="btn sm" data-act="loc-add-transfer" data-loc="${escapeHtml(locationName)}">↔ Transfer</button>
+          <button class="btn sm" data-act="loc-add-adjust" data-loc="${escapeHtml(locationName)}">= Set</button>
+        </div>
+      </div>
+    </div>
+    ${txns.length === 0
+      ? `<div class="report-empty">No transactions at ${escapeHtml(locationName)} yet.</div>`
+      : `<table>
+          <thead><tr>
+            <th style="width:100px;">Date</th>
+            <th style="width:90px;">Type</th>
+            <th>Note</th>
+            <th>Detail</th>
+            <th class="num" style="width:110px;">Amount</th>
+            <th style="width:70px;"></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`
+    }
+  `;
+  document.getElementById('breakdownDetailBackdrop').classList.add('open');
+}
+
 function renderCashProjectBreakdown() {
   const period = document.getElementById('projectPeriod').value;
   const { from, to } = periodBounds(period);
@@ -4180,13 +4272,19 @@ function renderCashLocationBreakdown() {
   wrap.innerHTML = list.map(x => {
     const pct = total !== 0 ? Math.round((x.balance / total) * 100) : 0;
     const color = x.balance < 0 ? 'var(--payable)' : (x.balance > 0 ? 'var(--receivable)' : 'var(--muted)');
-    const count = cashTx.filter(t => (t.location || 'Hand') === x.location).length;
+    // Count all txns involving this location (including transfers)
+    const count = cashTx.filter(t => {
+      if (t.type === 'transfer') return t.fromLocation === x.location || t.toLocation === x.location;
+      return (t.location || 'Hand') === x.location;
+    }).length;
     return `
-      <div class="loc-card" style="border-left-color:${color};">
+      <a href="#" class="loc-card" data-act="loc-detail" data-location="${escapeHtml(x.location)}"
+         style="border-left-color:${color};text-decoration:none;color:inherit;display:block;cursor:pointer;"
+         title="Click to view / edit transactions at ${escapeHtml(x.location)}">
         <div class="loc-name">${escapeHtml(x.location)}</div>
         <div class="loc-balance" style="color:${color};">${fmtMoney(x.balance)}</div>
-        <div class="loc-meta">${count} txn${count === 1 ? '' : 's'}${total > 0 && x.balance > 0 ? ' · ' + pct + '% of total' : ''}</div>
-      </div>`;
+        <div class="loc-meta">${count} txn${count === 1 ? '' : 's'}${total > 0 && x.balance > 0 ? ' · ' + pct + '% of total' : ''} · click for details</div>
+      </a>`;
   }).join('');
 }
 
@@ -6006,6 +6104,13 @@ document.getElementById('cashRecent').addEventListener('click', (e) => {
   }
 });
 document.getElementById('btnCashClear').addEventListener('click', clearAllCash);
+// Location cards → detail popup
+document.getElementById('cashLocationBreakdown').addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-act="loc-detail"]');
+  if (!a) return;
+  e.preventDefault();
+  openLocationDetail(a.dataset.location);
+});
 document.getElementById('catPeriod').addEventListener('change', renderCashCategoryBreakdown);
 function bindCatChipRow(rowId) {
   document.getElementById(rowId).addEventListener('click', (e) => {
@@ -6078,6 +6183,56 @@ document.getElementById('breakdownDetailContent').addEventListener('click', (e) 
   if (!b) return;
   const id = b.dataset.id;
   const bType = b.dataset.type;
+
+  // Location-detail popup actions
+  const loc = b.dataset.loc;
+  if (b.dataset.act === 'loc-edit') {
+    const tx = cashTx.find(x => x.id === id);
+    if (!tx) return;
+    closeBreakdownDetail();
+    openCashModal(tx.type, tx);
+    return;
+  }
+  if (b.dataset.act === 'loc-del') {
+    const tx = cashTx.find(x => x.id === id);
+    if (!tx) return;
+    if (!confirm(`Remove this ${tx.type} of ${fmtMoney(tx.amount)}?`)) return;
+    cashTx = cashTx.filter(x => x.id !== id);
+    saveArr(STORE.cash, cashTx);
+    log('DELETE', `Cash ${tx.type} · ${fmtMoney(tx.amount)}${tx.note ? ' — ' + tx.note : ''}`, tx.id);
+    toast('Removed');
+    renderCashPanel();
+    updateSummary();
+    renderAudit();
+    openLocationDetail(loc);
+    return;
+  }
+  if (b.dataset.act === 'loc-add-income' || b.dataset.act === 'loc-add-expense' ||
+      b.dataset.act === 'loc-add-adjust'  || b.dataset.act === 'loc-add-transfer') {
+    closeBreakdownDetail();
+    const mode = ({
+      'loc-add-income':  'income',
+      'loc-add-expense': 'expense',
+      'loc-add-adjust':  'adjustment',
+      'loc-add-transfer':'transfer',
+    })[b.dataset.act];
+    openCashModal(mode);
+    // Pre-fill this location as the default location (or the "from" for transfer)
+    if (mode === 'transfer') {
+      document.getElementById('cFromLocation').value = loc;
+    } else {
+      document.getElementById('cLocation').value = loc;
+    }
+    updateCashModalPreview();
+    // Highlight chip
+    const chipRow = mode === 'transfer' ? 'fromLocChips' : 'locChips';
+    document.querySelectorAll(`#${chipRow} .cat-chip`).forEach(c => {
+      c.classList.toggle('active', c.dataset.loc === loc);
+    });
+    setTimeout(() => document.getElementById('cAmount').focus(), 60);
+    return;
+  }
+
   if (b.dataset.act === 'bd-add') {
     const key = b.dataset.key;
     closeBreakdownDetail();
