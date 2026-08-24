@@ -3947,10 +3947,11 @@ function openBreakdownDetail(breakdownType) {
               ${breakdownType !== 'category' ? '<th>Category</th>' : ''}
               ${breakdownType !== 'project' ? '<th>Project</th>' : ''}
               <th class="num" style="width:110px;">Amount</th>
+              <th style="width:70px;"></th>
             </tr></thead>
             <tbody>
               ${txnsSorted.map(t => `
-                <tr>
+                <tr data-txid="${t.id}">
                   <td>${fmtDate(t.date)}</td>
                   <td>${escapeHtml(t.note || '—')}</td>
                   <td>${escapeHtml(t.location || 'Hand')}</td>
@@ -3958,6 +3959,10 @@ function openBreakdownDetail(breakdownType) {
                   ${breakdownType !== 'category' ? `<td>${escapeHtml(t.category || '—')}</td>` : ''}
                   ${breakdownType !== 'project' ? `<td>${escapeHtml(t.project || '—')}</td>` : ''}
                   <td class="num" style="color:${config.color};">${fmtMoney(t.amount)}</td>
+                  <td style="text-align:right;white-space:nowrap;">
+                    <button class="btn sm" data-act="bd-edit" data-id="${t.id}" data-type="${breakdownType}" title="Edit">✎</button>
+                    <button class="btn sm danger" data-act="bd-del" data-id="${t.id}" data-type="${breakdownType}" title="Delete">×</button>
+                  </td>
                 </tr>
               `).join('')}
             </tbody>
@@ -6066,6 +6071,31 @@ document.addEventListener('click', (e) => {
 document.getElementById('btnBreakdownDetailClose').addEventListener('click', closeBreakdownDetail);
 document.getElementById('breakdownDetailBackdrop').addEventListener('click', (e) => {
   if (e.target.id === 'breakdownDetailBackdrop') closeBreakdownDetail();
+});
+document.getElementById('breakdownDetailContent').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const id = b.dataset.id;
+  const bType = b.dataset.type;
+  if (b.dataset.act === 'bd-edit') {
+    const tx = cashTx.find(x => x.id === id);
+    if (!tx) return;
+    closeBreakdownDetail();
+    openCashModal(tx.type, tx);
+  }
+  if (b.dataset.act === 'bd-del') {
+    const tx = cashTx.find(x => x.id === id);
+    if (!tx) return;
+    if (!confirm(`Remove this ${tx.type} of ${fmtMoney(tx.amount)}?`)) return;
+    cashTx = cashTx.filter(x => x.id !== id);
+    saveArr(STORE.cash, cashTx);
+    log('DELETE', `Cash ${tx.type} · ${fmtMoney(tx.amount)}${tx.note ? ' — ' + tx.note : ''}`, tx.id);
+    toast('Removed');
+    renderCashPanel();
+    updateSummary();
+    renderAudit();
+    openBreakdownDetail(bType);
+  }
 });
 document.getElementById('cashProjectBreakdown').addEventListener('click', (e) => {
   const card = e.target.closest('[data-act="project-drill"]');
