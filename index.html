@@ -1517,17 +1517,18 @@
           <input type="text" id="pNote" placeholder="Optional (e.g. bank transfer, cash, cheque #1234)" />
         </div>
         <div class="form-group full">
-          <label for="pLocation">Cash location <span style="color:var(--muted);font-weight:400;">— যেখান থেকে গেল / যেখানে ঢুকল (optional)</span></label>
-          <input type="text" id="pLocation" list="cashLocationList" placeholder="Leave empty to skip cash flow" autocomplete="off" />
+          <label for="pLocation">Cash location <span style="color:var(--muted);font-weight:400;">— যেখান থেকে গেল / যেখানে ঢুকল</span></label>
+          <input type="text" id="pLocation" list="cashLocationList" placeholder="Pick a location" autocomplete="off" />
           <div class="cat-chips" id="pLocChips">
-            <button type="button" class="cat-chip" data-loc="">— Skip cash flow —</button>
             <button type="button" class="cat-chip" data-loc="Hand">Hand</button>
             <button type="button" class="cat-chip" data-loc="Bank">Bank</button>
             <button type="button" class="cat-chip" data-loc="bKash">bKash</button>
             <button type="button" class="cat-chip" data-loc="Nagad">Nagad</button>
             <button type="button" class="cat-chip" data-loc="Rocket">Rocket</button>
             <button type="button" class="cat-chip" data-loc="Card">Card</button>
+            <button type="button" class="cat-chip" data-loc="" style="opacity:0.6;">— Skip (don't update cash) —</button>
           </div>
+          <div id="pLocationHint" style="font-size:11px;color:var(--muted);margin-top:6px;"></div>
         </div>
         <div class="form-group full">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
@@ -2755,9 +2756,14 @@ function openPayModal(entryId, prefillAmount = null) {
 
   document.getElementById('pDate').value = todayLocalISO();
   document.getElementById('pNote').value = '';
-  document.getElementById('pLocation').value = '';
+  // Default location: most-used non-empty location, else "Hand"
+  const defaultLoc = (prefs.lastPaymentLocation) || getAllLocationBalances()[0]?.location || 'Hand';
+  document.getElementById('pLocation').value = defaultLoc;
   document.getElementById('pPlanned').checked = false;
-  document.querySelectorAll('#pLocChips .cat-chip').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('#pLocChips .cat-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.loc === defaultLoc);
+  });
+  updatePayLocationHint();
 
   document.getElementById('btnPaySave').textContent = `Save ${verb}`;
   document.getElementById('btnPayFull').style.display = bal > 0 ? '' : 'none';
@@ -2804,6 +2810,12 @@ function savePayment(e) {
 
   const isRecv = entry.type === 'receivable';
 
+  // Remember for next payment default
+  if (location) {
+    prefs.lastPaymentLocation = location;
+    savePrefs(prefs);
+  }
+
   // If a location was chosen AND payment is real (not planned), create a linked
   // cash transaction so the wallet balance actually reflects the movement.
   let linkedCashId = null;
@@ -2849,6 +2861,29 @@ function savePayment(e) {
   const histOpen = document.getElementById('histModalBackdrop').classList.contains('open');
   renderAll();
   if (histOpen) renderHistory(entry.id);
+}
+
+function updatePayLocationHint() {
+  const hint = document.getElementById('pLocationHint');
+  if (!hint) return;
+  const loc = document.getElementById('pLocation').value.trim();
+  const amt = Number(document.getElementById('pAmount').value) || 0;
+  const planned = document.getElementById('pPlanned').checked;
+  const entry = entries.find(x => x.id === payEntryId);
+  if (!entry) { hint.textContent = ''; return; }
+  const isRecv = entry.type === 'receivable';
+  if (planned) {
+    hint.textContent = 'Planned payment — will not affect cash balance.';
+    return;
+  }
+  if (!loc) {
+    hint.innerHTML = `<span style="color:var(--warning);">⚠ No cash location — this payment will only update the ${isRecv ? 'receivable' : 'payable'} balance, not your wallet.</span>`;
+    return;
+  }
+  const before = getLocationBalance(loc);
+  const after  = isRecv ? before + amt : before - amt;
+  const color  = after < 0 ? 'var(--payable)' : 'var(--text)';
+  hint.innerHTML = `<span style="color:var(--muted);">${escapeHtml(loc)}: ${fmtMoney(before, entry.currency)} → </span><strong style="color:${color};">${fmtMoney(after, entry.currency)}</strong>`;
 }
 
 function payFullBalance() {
@@ -4117,6 +4152,10 @@ function openLocationDetail(locationName) {
           <button class="btn sm" data-act="loc-add-transfer" data-loc="${escapeHtml(locationName)}">↔ Transfer</button>
           <button class="btn sm" data-act="loc-add-adjust" data-loc="${escapeHtml(locationName)}">= Set</button>
         </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center;margin-top:6px;">
+          <button class="btn sm" data-act="loc-rename" data-loc="${escapeHtml(locationName)}">✎ Rename</button>
+          <button class="btn sm danger" data-act="loc-remove" data-loc="${escapeHtml(locationName)}">× Delete Location</button>
+        </div>
       </div>
     </div>
     ${txns.length === 0
@@ -4343,19 +4382,13 @@ function renderCashLocationBreakdown() {
       return (t.location || 'Hand') === x.location;
     }).length;
     return `
-      <div class="loc-card" style="border-left-color:${color};position:relative;">
-        <div style="position:absolute;top:8px;right:8px;display:flex;gap:2px;">
-          <button class="btn sm" data-act="loc-rename" data-location="${escapeHtml(x.location)}" title="Rename this location" style="padding:2px 6px;font-size:11px;">✎</button>
-          <button class="btn sm danger" data-act="loc-remove" data-location="${escapeHtml(x.location)}" title="Delete all transactions at this location" style="padding:2px 6px;font-size:11px;">×</button>
-        </div>
-        <a href="#" data-act="loc-detail" data-location="${escapeHtml(x.location)}"
-           style="text-decoration:none;color:inherit;display:block;cursor:pointer;padding-right:60px;"
-           title="Click to view / edit transactions at ${escapeHtml(x.location)}">
-          <div class="loc-name">${escapeHtml(x.location)}</div>
-          <div class="loc-balance" style="color:${color};">${fmtMoney(x.balance)}</div>
-          <div class="loc-meta">${count} txn${count === 1 ? '' : 's'}${total > 0 && x.balance > 0 ? ' · ' + pct + '% of total' : ''} · click for details</div>
-        </a>
-      </div>`;
+      <a href="#" class="loc-card" data-act="loc-detail" data-location="${escapeHtml(x.location)}"
+         style="border-left-color:${color};text-decoration:none;color:inherit;display:block;cursor:pointer;"
+         title="Click to view / edit / rename / delete transactions at ${escapeHtml(x.location)}">
+        <div class="loc-name">${escapeHtml(x.location)}</div>
+        <div class="loc-balance" style="color:${color};">${fmtMoney(x.balance)}</div>
+        <div class="loc-meta">${count} txn${count === 1 ? '' : 's'}${total > 0 && x.balance > 0 ? ' · ' + pct + '% of total' : ''} · click for details</div>
+      </a>`;
   }).join('');
 }
 
@@ -6053,13 +6086,17 @@ document.getElementById('pLocChips').addEventListener('click', (e) => {
   document.getElementById('pLocation').value = chip.dataset.loc;
   document.querySelectorAll('#pLocChips .cat-chip').forEach(c => c.classList.remove('active'));
   chip.classList.add('active');
+  updatePayLocationHint();
 });
 document.getElementById('pLocation').addEventListener('input', () => {
   const val = document.getElementById('pLocation').value.trim().toLowerCase();
   document.querySelectorAll('#pLocChips .cat-chip').forEach(c => {
     c.classList.toggle('active', (c.dataset.loc || '').toLowerCase() === val);
   });
+  updatePayLocationHint();
 });
+document.getElementById('pAmount').addEventListener('input',  updatePayLocationHint);
+document.getElementById('pPlanned').addEventListener('change', updatePayLocationHint);
 
 // Add-charge modal
 document.getElementById('addForm').addEventListener('submit', saveCharge);
@@ -6190,56 +6227,58 @@ document.getElementById('cashRecent').addEventListener('click', (e) => {
   }
 });
 document.getElementById('btnCashClear').addEventListener('click', clearAllCash);
-// Location cards → detail popup / rename / remove
+// Location cards → detail popup (rename/remove is inside the popup)
 document.getElementById('cashLocationBreakdown').addEventListener('click', (e) => {
   const detailLink = e.target.closest('a[data-act="loc-detail"]');
-  if (detailLink) {
-    e.preventDefault();
-    openLocationDetail(detailLink.dataset.location);
-    return;
-  }
-  const btn = e.target.closest('button[data-act]');
-  if (!btn) return;
-  const oldName = btn.dataset.location;
-  if (btn.dataset.act === 'loc-rename') {
-    const newName = prompt(`Rename location "${oldName}" to:`, oldName);
-    if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
-    const trimmed = newName.trim();
-    let changed = 0;
-    for (const t of cashTx) {
-      if (t.type === 'transfer') {
-        if (t.fromLocation === oldName) { t.fromLocation = trimmed; changed++; }
-        if (t.toLocation   === oldName) { t.toLocation   = trimmed; changed++; }
-      } else if ((t.location || 'Hand') === oldName) {
-        t.location = trimmed; changed++;
-      }
-    }
-    saveArr(STORE.cash, cashTx);
-    log('UPDATE', `Renamed location "${oldName}" → "${trimmed}" (${changed} txns updated)`);
-    toast(`Renamed to ${trimmed}`);
-    renderCashPanel();
-    renderAudit();
-    return;
-  }
-  if (btn.dataset.act === 'loc-remove') {
-    const count = cashTx.filter(t => {
-      if (t.type === 'transfer') return t.fromLocation === oldName || t.toLocation === oldName;
-      return (t.location || 'Hand') === oldName;
-    }).length;
-    if (count === 0) { toast('No transactions to remove', 'error'); return; }
-    if (!confirm(`Delete "${oldName}" and ALL ${count} transaction${count === 1 ? '' : 's'} involving it?\n\nThis cannot be undone.`)) return;
-    cashTx = cashTx.filter(t => {
-      if (t.type === 'transfer') return t.fromLocation !== oldName && t.toLocation !== oldName;
-      return (t.location || 'Hand') !== oldName;
-    });
-    saveArr(STORE.cash, cashTx);
-    log('DELETE', `Removed location "${oldName}" and ${count} associated transactions`);
-    toast(`Removed ${count} transactions from ${oldName}`);
-    renderCashPanel();
-    updateSummary();
-    renderAudit();
-  }
+  if (!detailLink) return;
+  e.preventDefault();
+  openLocationDetail(detailLink.dataset.location);
 });
+
+function renameLocation(oldName) {
+  const newName = prompt(`Rename location "${oldName}" to:`, oldName);
+  if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
+  const trimmed = newName.trim();
+  let changed = 0;
+  for (const t of cashTx) {
+    if (t.type === 'transfer') {
+      if (t.fromLocation === oldName) { t.fromLocation = trimmed; changed++; }
+      if (t.toLocation   === oldName) { t.toLocation   = trimmed; changed++; }
+    } else if ((t.location || 'Hand') === oldName) {
+      t.location = trimmed; changed++;
+    }
+  }
+  // Also rename in linked cash txns' location field (already covered above) and payment records
+  for (const e of entries) {
+    for (const p of (e.payments || [])) {
+      if (p.location === oldName) p.location = trimmed;
+    }
+  }
+  saveArr(STORE.cash, cashTx);
+  saveArr(STORE.entries, entries);
+  log('UPDATE', `Renamed location "${oldName}" → "${trimmed}" (${changed} txns updated)`);
+  toast(`Renamed to ${trimmed}`);
+  closeBreakdownDetail();
+  renderAll();
+}
+
+function removeLocation(oldName) {
+  const count = cashTx.filter(t => {
+    if (t.type === 'transfer') return t.fromLocation === oldName || t.toLocation === oldName;
+    return (t.location || 'Hand') === oldName;
+  }).length;
+  if (count === 0) { toast('No transactions to remove', 'error'); return; }
+  if (!confirm(`Delete "${oldName}" and ALL ${count} transaction${count === 1 ? '' : 's'} involving it?\n\nThis cannot be undone.`)) return;
+  cashTx = cashTx.filter(t => {
+    if (t.type === 'transfer') return t.fromLocation !== oldName && t.toLocation !== oldName;
+    return (t.location || 'Hand') !== oldName;
+  });
+  saveArr(STORE.cash, cashTx);
+  log('DELETE', `Removed location "${oldName}" and ${count} associated transactions`);
+  toast(`Removed ${count} transactions from ${oldName}`);
+  closeBreakdownDetail();
+  renderAll();
+}
 document.getElementById('catPeriod').addEventListener('change', renderCashCategoryBreakdown);
 function bindCatChipRow(rowId) {
   document.getElementById(rowId).addEventListener('click', (e) => {
@@ -6336,6 +6375,8 @@ document.getElementById('breakdownDetailContent').addEventListener('click', (e) 
     openLocationDetail(loc);
     return;
   }
+  if (b.dataset.act === 'loc-rename')  { renameLocation(loc); return; }
+  if (b.dataset.act === 'loc-remove')  { removeLocation(loc); return; }
   if (b.dataset.act === 'loc-add-income' || b.dataset.act === 'loc-add-expense' ||
       b.dataset.act === 'loc-add-adjust'  || b.dataset.act === 'loc-add-transfer') {
     closeBreakdownDetail();
